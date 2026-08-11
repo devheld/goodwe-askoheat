@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AskoHeat Manager</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --surface-page:   #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --success:        #006300;
+
+    --series-pv:              #2a78d6; /* blue, slot 1 */
+    --series-cons:            #eb6834; /* orange, slot 2 */
+    --series-batt-charge:     #1baf7a; /* aqua, slot 3 */
+    --series-batt-discharge:  #eda100; /* yellow, slot 4 */
+    --series-grid:            #e87ba4; /* magenta, slot 5 */
+    --series-temp:            #008300; /* green, slot 6 */
+    --series-load:            #4a3aa7; /* violet, slot 7 */
+    --series-step:            #2a78d6; /* blue (single series) */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --surface-page:   #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --success:        #0ca30c;
+
+      --series-pv:              #3987e5;
+      --series-cons:            #d95926;
+      --series-batt-charge:     #199e70;
+      --series-batt-discharge:  #c98500;
+      --series-grid:            #d55181;
+      --series-temp:            #008300;
+      --series-load:            #9085e9;
+      --series-step:            #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --surface-page:   #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --success:        #0ca30c;
+
+    --series-pv:              #3987e5;
+    --series-cons:            #d95926;
+    --series-batt-charge:     #199e70;
+    --series-batt-discharge:  #c98500;
+    --series-grid:            #d55181;
+    --series-temp:            #008300;
+    --series-load:            #9085e9;
+    --series-step:            #3987e5;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--surface-page);
+    color: var(--text-primary);
+  }
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin: 0 0 20px;
+  }
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .tile {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .tile .label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+  .tile .value {
+    font-size: 22px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .tile .sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .tile .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+
+  .range-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .range-row button {
+    font: inherit;
+    font-size: 13px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .range-row button[aria-pressed="true"] {
+    color: var(--text-primary);
+    border-color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .chart-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .chart-card h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .legend .swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+  svg.chart {
+    width: 100%;
+    height: auto;
+    display: block;
+    overflow: visible;
+  }
+  .empty-state {
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 24px 0;
+    text-align: center;
+  }
+  .footer-note {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>AskoHeat Manager</h1>
+  <p class="subtitle" id="statusLine">Loading data...</p>
+
+  <section class="tiles" id="tiles"></section>
+  <section class="tiles" id="tilesAsko"></section>
+
+  <div class="range-row" id="rangeRow">
+    <button data-hours="1">1h</button>
+    <button data-hours="6">6h</button>
+    <button data-hours="24" aria-pressed="true">24h</button>
+    <button data-hours="168">7d</button>
+    <button data-hours="720">30d</button>
+  </div>
+
+  <div class="chart-card">
+    <h2>Power</h2>
+    <div class="legend" id="powerLegend"></div>
+    <div id="powerChartWrap"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>AskoHeat Step (Target)</h2>
+    <div id="stepChartWrap"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>AskoHeat Load (Actual)</h2>
+    <div id="loadChartWrap"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>AskoHeat Temperature</h2>
+    <div id="tempChartWrap"></div>
+  </div>
+
+  <p class="footer-note">As of: <span id="lastUpdate">-</span> · updates every <span id="updateInterval">-</span>s</p>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
