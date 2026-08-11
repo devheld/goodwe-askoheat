@@ -29,6 +29,7 @@ class Settings:
     step_max: int
     poll_interval_s: int
     zero_threshold_kw: float
+    battery_discharge_margin: float
 
     db_path: Path
 
@@ -49,6 +50,7 @@ def load_settings() -> Settings:
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),
         zero_threshold_kw=float(os.environ.get("ZERO_THRESHOLD_KW", "0.01")),
+        battery_discharge_margin=float(os.environ.get("BATTERY_DISCHARGE_MARGIN", "0.03")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/askoheat.db"),
     )
 

@@ -34,9 +34,29 @@ class GoodWeCloudReader:
         the energy balance PV - consumption - grid, and split into two
         always-non-negative values (battery_charge_kw/battery_discharge_kw)
         instead of one signed value - simpler for display/charting.
+
+    The consumption calculation assumes a power factor of 1, but the real
+    power factor is closer to ~0.97-0.98, which systematically overestimates
+    consumption by a couple of percent - proportional to load, not random
+    noise. Left uncorrected this shows up as a phantom battery discharge even
+    when the battery is idle. battery_charging therefore only flips to
+    "discharging" once the derived value exceeds a margin proportional to
+    consumption (battery_discharge_margin), with zero_threshold_kw as a floor
+    for very low load. The raw battery_charge_kw/battery_discharge_kw values
+    themselves are left uncorrected/unclamped for transparency on the
+    dashboard - only the charging/discharging decision applies the margin.
     """
 
-    def __init__(self, account: str, password: str, station_id: str) -> None:
+    def __init__(
+        self,
+        account: str,
+        password: str,
+        station_id: str,
+        zero_threshold_kw: float = 0.01,
+        battery_discharge_margin: float = 0.03,
+    ) -> None:
+        self._zero_threshold_kw = zero_threshold_kw
+        self._battery_discharge_margin = battery_discharge_margin
         # skipload=True: otherwise the API constructor would immediately load
         # data synchronously (with built-in retries and sys.exit() on final
         # failure). That must not happen here, since GoodWeCloudReader is
@@ -74,7 +94,11 @@ class GoodWeCloudReader:
         battery_signed_kw = pv_kw - consumption_kw - grid_kw
         battery_charge_kw = max(battery_signed_kw, 0.0)
         battery_discharge_kw = max(-battery_signed_kw, 0.0)
-        battery_charging = battery_signed_kw >= 0
+
+        battery_discharge_threshold_kw = max(
+            self._zero_threshold_kw, consumption_kw * self._battery_discharge_margin
+        )
+        battery_charging = battery_signed_kw >= -battery_discharge_threshold_kw
 
         return Readings(
             pv_kw=pv_kw,

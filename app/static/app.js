@@ -45,6 +45,7 @@ function renderTiles(containerId, defs, latest) {
     tile.className = "tile";
     let valueText;
     let sub = "";
+    let subClass = "sub";
     if (
       def.key === "pv_kw" ||
       def.key === "consumption_kw" ||
@@ -55,6 +56,10 @@ function renderTiles(containerId, defs, latest) {
       valueText = `${fmt(latest[def.key])} ${def.unit}`;
     } else if (def.key === "step") {
       valueText = `${latest.step}${def.unit}`;
+      if (latest.status === "capped") {
+        sub = "Not heating (temperature limit)";
+        subClass = "sub warning";
+      }
     } else if (def.key === "heater_load_w") {
       valueText = `${latest.heater_load_w} ${def.unit}`;
     } else if (def.key === "askoheat_temp_c") {
@@ -65,9 +70,33 @@ function renderTiles(containerId, defs, latest) {
     tile.innerHTML = `
       <div class="label"><span class="dot" style="background:${cssVar(def.color)}"></span>${def.label}</div>
       <div class="value">${valueText}</div>
-      ${sub ? `<div class="sub">${sub}</div>` : ""}
+      ${sub ? `<div class="${subClass}">${sub}</div>` : ""}
     `;
     wrap.appendChild(tile);
+  }
+}
+
+// Status codes that mean the surplus is actively being used (shown with the
+// "good"/green accent).
+const GOOD_STATUSES = new Set(["increasing", "max"]);
+// Status codes that need attention (shown with the "warning"/amber accent).
+const WARNING_STATUSES = new Set(["capped"]);
+
+function renderStatusBanner(latest) {
+  const banner = document.getElementById("statusBanner");
+  const text = document.getElementById("statusBannerText");
+  banner.classList.remove("status-good", "status-warning", "status-error");
+  if (!latest.status_text) {
+    text.textContent = "No status available yet";
+    return;
+  }
+  text.textContent = latest.status_text;
+  if (latest.status === "error") {
+    banner.classList.add("status-error");
+  } else if (WARNING_STATUSES.has(latest.status)) {
+    banner.classList.add("status-warning");
+  } else if (GOOD_STATUSES.has(latest.status)) {
+    banner.classList.add("status-good");
   }
 }
 
@@ -78,6 +107,7 @@ async function fetchLive() {
     const latest = await res.json();
     renderTiles("tiles", TILE_DEFS, latest);
     renderTiles("tilesAsko", ASKO_TILE_DEFS, latest);
+    renderStatusBanner(latest);
     document.getElementById("statusLine").textContent =
       latest.battery_charging === undefined ? "" : "Live data";
     document.getElementById("lastUpdate").textContent = new Date(latest.timestamp).toLocaleString("en-GB");

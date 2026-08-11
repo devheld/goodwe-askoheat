@@ -16,6 +16,8 @@
     --baseline:       #c3c2b7;
     --border:         rgba(11,11,11,0.10);
     --success:        #006300;
+    --status-warning: #fab219; /* fixed status color, not themed */
+    --status-error:   #d03b3b; /* fixed status color, not themed */
 
     --series-pv:              #2a78d6; /* blue, slot 1 */
     --series-cons:            #eb6834; /* orange, slot 2 */
@@ -38,6 +40,8 @@
       --baseline:       #383835;
       --border:         rgba(255,255,255,0.10);
       --success:        #0ca30c;
+      --status-warning: #fab219;
+      --status-error:   #d03b3b;
 
       --series-pv:              #3987e5;
       --series-cons:            #d95926;
@@ -60,6 +64,8 @@
     --baseline:       #383835;
     --border:         rgba(255,255,255,0.10);
     --success:        #0ca30c;
+    --status-warning: #fab219;
+    --status-error:   #d03b3b;
 
     --series-pv:              #3987e5;
     --series-cons:            #d95926;
@@ -92,6 +98,48 @@
     color: var(--text-secondary);
     font-size: 13px;
     margin: 0 0 20px;
+  }
+  .status-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--baseline);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+  .status-banner.status-good {
+    border-left-color: var(--success);
+  }
+  .status-banner .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--baseline);
+    flex-shrink: 0;
+  }
+  .status-banner.status-good .status-dot {
+    background: var(--success);
+  }
+  .status-banner.status-warning {
+    border-left-color: var(--status-warning);
+  }
+  .status-banner.status-warning .status-dot {
+    background: var(--status-warning);
+  }
+  .status-banner.status-error {
+    border-left-color: var(--status-error);
+  }
+  .status-banner.status-error .status-dot {
+    background: var(--status-error);
+  }
+  .tile .sub.warning {
+    color: var(--status-warning);
   }
   .tiles {
     display: grid;
@@ -202,6 +250,11 @@
 <main>
   <h1>AskoHeat Manager</h1>
   <p class="subtitle" id="statusLine">Loading data...</p>
+
+  <div class="status-banner" id="statusBanner">
+    <span class="status-dot"></span>
+    <span id="statusBannerText">-</span>
+  </div>
 
   <section class="tiles" id="tiles"></section>
   <section class="tiles" id="tilesAsko"></section>

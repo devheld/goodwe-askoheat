@@ -32,7 +32,13 @@ async def lifespan(app: FastAPI):
     global controller, store, worker_thread
 
     store = HistoryStore(settings.db_path)
-    reader = GoodWeCloudReader(settings.sems_account, settings.sems_password, settings.station_id)
+    reader = GoodWeCloudReader(
+        settings.sems_account,
+        settings.sems_password,
+        settings.station_id,
+        settings.zero_threshold_kw,
+        settings.battery_discharge_margin,
+    )
     askoheat = AskoHeatController(
         settings.askoheat_host,
         settings.askoheat_port,

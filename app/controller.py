@@ -23,6 +23,11 @@ class SurplusController:
     asyncio event loop.
     """
 
+    # A commanded step should draw noticeably more than this once actually
+    # heating; anything below is treated as "not really heating" rather than
+    # trusting small register noise.
+    MIN_ACTIVE_LOAD_W = 50
+
     def __init__(
         self,
         settings: Settings,
@@ -70,6 +75,49 @@ class SurplusController:
                 )
                 self._stop_event.wait(self._settings.poll_interval_s)
 
+    def _describe_status(
+        self,
+        has_surplus: bool,
+        readings,
+        step_before: int,
+        heater_load_w: int,
+        askoheat_temp_c: float | None,
+    ) -> tuple[str, str]:
+        """derives a short status code + human-readable text for the dashboard,
+        explaining what the control loop is doing this tick and why"""
+        if heater_load_w < 0:
+            return "error", "Failed to control the AskoHeat - check the connection"
+
+        # A commanded step that isn't actually drawing power almost always
+        # means the AskoHeat's own thermostat has cut the heating elements
+        # off (see the temperature limit reference line on the temperature
+        # chart). Surface that regardless of what the surplus calculation
+        # says, since "we're commanding heat but nothing is happening" is the
+        # most actionable thing the dashboard can show.
+        if self._current_step > 0 and heater_load_w < self.MIN_ACTIVE_LOAD_W:
+            temp_note = f" ({askoheat_temp_c:.0f}°C)" if askoheat_temp_c is not None else ""
+            return (
+                "capped",
+                f"Step {self._current_step}/{self._settings.step_max} commanded but "
+                f"AskoHeat is not heating{temp_note} - likely at its temperature limit",
+            )
+
+        if has_surplus:
+            if self._current_step > step_before:
+                return "increasing", "PV surplus available - increasing heater step"
+            return "max", "PV surplus available - heater already at maximum step"
+
+        if not readings.battery_charging:
+            reason = "battery discharging"
+        elif abs(readings.grid_kw) >= self._settings.zero_threshold_kw:
+            reason = "grid flow detected"
+        else:
+            reason = "no surplus"
+
+        if self._current_step < step_before:
+            return "decreasing", f"No surplus ({reason}) - reducing heater step"
+        return "off", f"No surplus ({reason}) - heater off"
+
     def _tick(self) -> None:
         try:
             readings = self._reader.read()
@@ -85,6 +133,7 @@ class SurplusController:
             and readings.battery_charging
         )
 
+        step_before = self._current_step
         if has_surplus:
             self._current_step = min(self._current_step + 1, self._settings.step_max)
         else:
@@ -101,6 +150,10 @@ class SurplusController:
         except Exception:
             logger.exception("Failed to read the AskoHeat temperature")
             askoheat_temp_c = None
+
+        status, status_text = self._describe_status(
+            has_surplus, readings, step_before, heater_load_w, askoheat_temp_c
+        )
 
         timestamp = datetime.now(timezone.utc).isoformat()
         reading = Reading(
@@ -129,10 +182,12 @@ class SurplusController:
                 "step": self._current_step,
                 "heater_load_w": heater_load_w,
                 "askoheat_temp_c": askoheat_temp_c,
+                "status": status,
+                "status_text": status_text,
             }
 
         logger.info(
-            "step=%s pv=%.2fkW consumption=%.2fkW battery_charge=%.2fkW battery_discharge=%.2fkW grid=%.2fkW -> askoheat_load=%sW temp=%sC",
+            "step=%s pv=%.2fkW consumption=%.2fkW battery_charge=%.2fkW battery_discharge=%.2fkW grid=%.2fkW -> askoheat_load=%sW temp=%sC [%s] %s",
             self._current_step,
             readings.pv_kw,
             readings.consumption_kw,
@@ -141,4 +196,6 @@ class SurplusController:
             readings.grid_kw,
             heater_load_w,
             f"{askoheat_temp_c:.1f}" if askoheat_temp_c is not None else "?",
+            status,
+            status_text,
         )
