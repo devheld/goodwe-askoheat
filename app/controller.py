@@ -43,6 +43,10 @@ class SurplusController:
         self._lock = threading.Lock()
         self._latest: dict | None = None
         self._stop_event = threading.Event()
+        # True for exactly the first tick after (re)reading the step from the
+        # device: that tick should observe/confirm against current PV
+        # conditions instead of blindly nudging the step up or down.
+        self._pending_initial_hold = False
 
     @property
     def latest(self) -> dict | None:
@@ -54,6 +58,8 @@ class SurplusController:
 
     def run_forever(self) -> None:
         self._connect_with_retry()
+        self._current_step = self._read_initial_step()
+        self._pending_initial_hold = True
         try:
             while not self._stop_event.is_set():
                 self._tick()
@@ -75,6 +81,27 @@ class SurplusController:
                 )
                 self._stop_event.wait(self._settings.poll_interval_s)
 
+    def _read_initial_step(self) -> int:
+        """reads the AskoHeat's currently commanded step so a restart of this
+        app picks up where the device already is, instead of jumping back to
+        step_min and slowly ramping back up over several poll cycles"""
+        try:
+            step = self._askoheat.read_step()
+        except Exception:
+            logger.exception(
+                "Failed to read the AskoHeat's current step, starting from step_min"
+            )
+            return self._settings.step_min
+
+        clamped_step = max(self._settings.step_min, min(step, self._settings.step_max))
+        if clamped_step != step:
+            logger.warning(
+                "AskoHeat reported step %s, outside [%s, %s] - clamping",
+                step, self._settings.step_min, self._settings.step_max,
+            )
+        logger.info("Starting from the AskoHeat's current step: %s", clamped_step)
+        return clamped_step
+
     def _describe_status(
         self,
         has_surplus: bool,
@@ -82,6 +109,7 @@ class SurplusController:
         step_before: int,
         heater_load_w: int,
         askoheat_temp_c: float | None,
+        is_initial_hold: bool = False,
     ) -> tuple[str, str]:
         """derives a short status code + human-readable text for the dashboard,
         explaining what the control loop is doing this tick and why"""
@@ -100,6 +128,14 @@ class SurplusController:
                 "capped",
                 f"Step {self._current_step}/{self._settings.step_max} commanded but "
                 f"AskoHeat is not heating{temp_note} - likely at its temperature limit",
+            )
+
+        if is_initial_hold:
+            surplus_note = "surplus available" if has_surplus else "no surplus right now"
+            return (
+                "holding",
+                f"Resumed at step {self._current_step}/{self._settings.step_max} "
+                f"(read from device, {surplus_note}) - adjusting from the next cycle",
             )
 
         if has_surplus:
@@ -134,7 +170,13 @@ class SurplusController:
         )
 
         step_before = self._current_step
-        if has_surplus:
+        is_initial_hold = self._pending_initial_hold
+        if is_initial_hold:
+            # First tick after (re)reading the step from the device: hold it
+            # and just observe this cycle's conditions instead of blindly
+            # nudging it up or down - see _describe_status's "holding" case.
+            self._pending_initial_hold = False
+        elif has_surplus:
             self._current_step = min(self._current_step + 1, self._settings.step_max)
         else:
             self._current_step = max(self._current_step - 1, self._settings.step_min)
@@ -152,7 +194,7 @@ class SurplusController:
             askoheat_temp_c = None
 
         status, status_text = self._describe_status(
-            has_surplus, readings, step_before, heater_load_w, askoheat_temp_c
+            has_surplus, readings, step_before, heater_load_w, askoheat_temp_c, is_initial_hold
         )
 
         timestamp = datetime.now(timezone.utc).isoformat()
