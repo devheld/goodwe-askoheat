@@ -13,9 +13,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 @dataclass(frozen=True)
 class Settings:
-    sems_account: str
-    sems_password: str
-    station_id: str
+    goodwe_host: str
+    goodwe_port: int
+    goodwe_slave_id: int
 
     askoheat_host: str
     askoheat_port: int
@@ -29,16 +29,15 @@ class Settings:
     step_max: int
     poll_interval_s: int
     zero_threshold_kw: float
-    battery_discharge_margin: float
 
     db_path: Path
 
 
 def load_settings() -> Settings:
     return Settings(
-        sems_account=os.environ["SEMS_ACCOUNT"],
-        sems_password=os.environ["SEMS_PASSWORD"],
-        station_id=os.environ["SEMS_STATION_ID"],
+        goodwe_host=os.environ.get("GOODWE_HOST", "192.168.68.50"),
+        goodwe_port=int(os.environ.get("GOODWE_PORT", "502")),
+        goodwe_slave_id=int(os.environ.get("GOODWE_SLAVE_ID", "247")),
         askoheat_host=os.environ.get("ASKOHEAT_HOST", "192.168.68.73"),
         askoheat_port=int(os.environ.get("ASKOHEAT_PORT", "502")),
         askoheat_step_register=int(os.environ.get("ASKOHEAT_STEP_REGISTER", "200")),
@@ -50,7 +49,6 @@ def load_settings() -> Settings:
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),
         zero_threshold_kw=float(os.environ.get("ZERO_THRESHOLD_KW", "0.01")),
-        battery_discharge_margin=float(os.environ.get("BATTERY_DISCHARGE_MARGIN", "0.03")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/askoheat.db"),
     )
 

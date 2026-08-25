@@ -13,7 +13,7 @@ from .askoheat_client import AskoHeatController
 from .config import settings
 from .controller import SurplusController
 from .database import HistoryStore
-from .goodwe_client import GoodWeCloudReader
+from .goodwe_client import GoodWeModbusReader
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -32,12 +32,10 @@ async def lifespan(app: FastAPI):
     global controller, store, worker_thread
 
     store = HistoryStore(settings.db_path)
-    reader = GoodWeCloudReader(
-        settings.sems_account,
-        settings.sems_password,
-        settings.station_id,
-        settings.zero_threshold_kw,
-        settings.battery_discharge_margin,
+    reader = GoodWeModbusReader(
+        settings.goodwe_host,
+        settings.goodwe_port,
+        settings.goodwe_slave_id,
     )
     askoheat = AskoHeatController(
         settings.askoheat_host,

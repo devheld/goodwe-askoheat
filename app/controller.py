@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from .askoheat_client import AskoHeatController
 from .config import Settings
 from .database import HistoryStore, Reading
-from .goodwe_client import GoodWeCloudReader
+from .goodwe_client import GoodWeModbusReader
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class SurplusController:
     def __init__(
         self,
         settings: Settings,
-        reader: GoodWeCloudReader,
+        reader: GoodWeModbusReader,
         askoheat: AskoHeatController,
         store: HistoryStore,
     ) -> None:
@@ -57,7 +57,8 @@ class SurplusController:
         self._stop_event.set()
 
     def run_forever(self) -> None:
-        self._connect_with_retry()
+        self._connect_with_retry("GoodWe inverter", self._reader.connect)
+        self._connect_with_retry("AskoHeat", self._askoheat.connect)
         self._current_step = self._read_initial_step()
         self._pending_initial_hold = True
         try:
@@ -66,17 +67,19 @@ class SurplusController:
                 self._stop_event.wait(self._settings.poll_interval_s)
         finally:
             self._askoheat.close()
+            self._reader.close()
 
-    def _connect_with_retry(self) -> None:
-        """connects to the AskoHeat, retrying every poll_interval_s on
-        failure instead of letting the background thread die"""
+    def _connect_with_retry(self, device_name: str, connect_fn) -> None:
+        """connects to a device, retrying every poll_interval_s on failure
+        instead of letting the background thread die"""
         while not self._stop_event.is_set():
             try:
-                self._askoheat.connect()
+                connect_fn()
                 return
             except Exception:
                 logger.exception(
-                    "Failed to connect to AskoHeat, retrying in %ss",
+                    "Failed to connect to %s, retrying in %ss",
+                    device_name,
                     self._settings.poll_interval_s,
                 )
                 self._stop_event.wait(self._settings.poll_interval_s)
@@ -163,7 +166,7 @@ class SurplusController:
 
         # Surplus only when there is no grid import/export AND the battery
         # is charging rather than discharging (battery_charging comes from
-        # the energy balance derived in GoodWeCloudReader).
+        # the real measured battery power read by GoodWeModbusReader).
         has_surplus = (
             abs(readings.grid_kw) < self._settings.zero_threshold_kw
             and readings.battery_charging
