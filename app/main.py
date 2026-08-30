@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
         settings.goodwe_host,
         settings.goodwe_port,
         settings.goodwe_slave_id,
+        settings.zero_threshold_kw,
     )
     askoheat = AskoHeatController(
         settings.askoheat_host,

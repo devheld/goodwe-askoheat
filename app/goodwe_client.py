@@ -49,6 +49,11 @@ class GoodWeModbusReader:
         ~0 on live data, whereas without the sign flip it was off by several
         kW.
 
+    battery_charging still applies zero_threshold_kw as a tolerance around 0
+    (not a hard >= 0 cut): Ibattery1's resolution is 0.1A, which at this
+    installation's ~765V battery bus is ~76W per step, so idle noise alone
+    can read as a few hundredths of a kW of "discharge" with no tolerance.
+
     The registers are read in a single request covering 35103-35184
     (well within the ~125 register limit this device accepts per request).
     All multi-register values use big-endian (high word first) encoding,
@@ -74,10 +79,12 @@ class GoodWeModbusReader:
         host: str,
         port: int = 502,
         slave_id: int = 247,
+        zero_threshold_kw: float = 0.01,
     ) -> None:
         self._host = host
         self._port = port
         self._slave_id = slave_id
+        self._zero_threshold_kw = zero_threshold_kw
         self._client = ModbusTcpClient(host, port=port)
 
     def connect(self) -> None:
@@ -152,7 +159,7 @@ class GoodWeModbusReader:
 
         battery_charge_kw = max(battery_signed_kw, 0.0)
         battery_discharge_kw = max(-battery_signed_kw, 0.0)
-        battery_charging = battery_signed_kw >= 0
+        battery_charging = battery_signed_kw >= -self._zero_threshold_kw
 
         return Readings(
             pv_kw=pv_kw,
