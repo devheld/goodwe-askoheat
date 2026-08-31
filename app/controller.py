@@ -113,6 +113,7 @@ class SurplusController:
         heater_load_w: int,
         askoheat_temp_c: float | None,
         is_initial_hold: bool = False,
+        blocked_by_temp: bool = False,
     ) -> tuple[str, str]:
         """derives a short status code + human-readable text for the dashboard,
         explaining what the control loop is doing this tick and why"""
@@ -131,6 +132,14 @@ class SurplusController:
                 "capped",
                 f"Step {self._current_step}/{self._settings.step_max} commanded but "
                 f"AskoHeat is not heating{temp_note} - likely at its temperature limit",
+            )
+
+        if blocked_by_temp:
+            return (
+                "warm",
+                f"PV surplus available but AskoHeat still warm "
+                f"({askoheat_temp_c:.0f}°C > {self._settings.heating_start_max_temp_c:.0f}°C) "
+                f"- waiting to cool down before starting to heat again",
             )
 
         if is_initial_hold:
@@ -164,6 +173,16 @@ class SurplusController:
             logger.exception("Failed to fetch GoodWe data")
             return
 
+        # Read temperature up front (not just after set_step as before) since
+        # the heating-start hysteresis below needs it to make the step
+        # decision - this also saves the second Modbus round-trip we used to
+        # do after set_step().
+        try:
+            askoheat_temp_c = self._askoheat.read_temperature_c()
+        except Exception:
+            logger.exception("Failed to read the AskoHeat temperature")
+            askoheat_temp_c = None
+
         # Surplus only when there is no grid import/export AND the battery
         # is charging rather than discharging (battery_charging comes from
         # the real measured battery power read by GoodWeModbusReader).
@@ -174,13 +193,28 @@ class SurplusController:
 
         step_before = self._current_step
         is_initial_hold = self._pending_initial_hold
+        blocked_by_temp = False
         if is_initial_hold:
             # First tick after (re)reading the step from the device: hold it
             # and just observe this cycle's conditions instead of blindly
             # nudging it up or down - see _describe_status's "holding" case.
             self._pending_initial_hold = False
         elif has_surplus:
-            self._current_step = min(self._current_step + 1, self._settings.step_max)
+            # Hysteresis: only START a new heating cycle (step 0 -> >0) while
+            # the tank is at or below heating_start_max_temp_c. Once heating
+            # is already running (step > 0), keep adjusting it normally and
+            # let the device's own (higher) temperature limit stop it - see
+            # the "capped" status above. Without this, heating would start
+            # and stop repeatedly right at the device's cutoff temperature.
+            starting_new_cycle = step_before == self._settings.step_min
+            if (
+                starting_new_cycle
+                and askoheat_temp_c is not None
+                and askoheat_temp_c > self._settings.heating_start_max_temp_c
+            ):
+                blocked_by_temp = True
+            else:
+                self._current_step = min(self._current_step + 1, self._settings.step_max)
         else:
             self._current_step = max(self._current_step - 1, self._settings.step_min)
 
@@ -190,14 +224,14 @@ class SurplusController:
             logger.exception("Failed to control the AskoHeat")
             heater_load_w = -1
 
-        try:
-            askoheat_temp_c = self._askoheat.read_temperature_c()
-        except Exception:
-            logger.exception("Failed to read the AskoHeat temperature")
-            askoheat_temp_c = None
-
         status, status_text = self._describe_status(
-            has_surplus, readings, step_before, heater_load_w, askoheat_temp_c, is_initial_hold
+            has_surplus,
+            readings,
+            step_before,
+            heater_load_w,
+            askoheat_temp_c,
+            is_initial_hold,
+            blocked_by_temp,
         )
 
         timestamp = datetime.now(timezone.utc).isoformat()

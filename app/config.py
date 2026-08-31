@@ -29,6 +29,11 @@ class Settings:
     step_max: int
     poll_interval_s: int
     zero_threshold_kw: float
+    # Hysteresis: a new heating cycle (step 0 -> >0) is only started while the
+    # AskoHeat's tank temperature is at or below this. Once heating is
+    # already running it is left to the device's own (higher) temperature
+    # limit rather than stopped here - see SurplusController._tick().
+    heating_start_max_temp_c: float
 
     db_path: Path
 
@@ -49,6 +54,7 @@ def load_settings() -> Settings:
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),
         zero_threshold_kw=float(os.environ.get("ZERO_THRESHOLD_KW", "0.01")),
+        heating_start_max_temp_c=float(os.environ.get("HEATING_START_MAX_TEMP_C", "52")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/askoheat.db"),
     )
 
