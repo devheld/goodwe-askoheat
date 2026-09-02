@@ -246,6 +246,8 @@ class SurplusController:
             step=self._current_step,
             heater_load_w=heater_load_w,
             askoheat_temp_c=askoheat_temp_c,
+            status=status,
+            status_text=status_text,
         )
         self._store.insert(reading)
 

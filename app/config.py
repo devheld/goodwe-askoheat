@@ -54,7 +54,7 @@ def load_settings() -> Settings:
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),
         zero_threshold_kw=float(os.environ.get("ZERO_THRESHOLD_KW", "0.01")),
-        heating_start_max_temp_c=float(os.environ.get("HEATING_START_MAX_TEMP_C", "52")),
+        heating_start_max_temp_c=float(os.environ.get("HEATING_START_MAX_TEMP_C", "55")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/askoheat.db"),
     )
 

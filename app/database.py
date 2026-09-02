@@ -18,6 +18,8 @@ class Reading:
     step: int
     heater_load_w: int
     askoheat_temp_c: float
+    status: str
+    status_text: str
 
 
 class HistoryStore:
@@ -51,14 +53,21 @@ class HistoryStore:
                 )
                 """
             )
+            # Additive migration for databases created before status tracking
+            # existed - older rows just keep NULL for these columns.
+            existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(readings)")}
+            if "status" not in existing_columns:
+                conn.execute("ALTER TABLE readings ADD COLUMN status TEXT")
+            if "status_text" not in existing_columns:
+                conn.execute("ALTER TABLE readings ADD COLUMN status_text TEXT")
 
     def insert(self, reading: Reading) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO readings
-                (timestamp, pv_kw, consumption_kw, battery_charge_kw, battery_discharge_kw, grid_kw, battery_charging, step, heater_load_w, askoheat_temp_c)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (timestamp, pv_kw, consumption_kw, battery_charge_kw, battery_discharge_kw, grid_kw, battery_charging, step, heater_load_w, askoheat_temp_c, status, status_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     reading.timestamp,
@@ -71,6 +80,8 @@ class HistoryStore:
                     reading.step,
                     reading.heater_load_w,
                     reading.askoheat_temp_c,
+                    reading.status,
+                    reading.status_text,
                 ),
             )
 

@@ -59,6 +59,9 @@ function renderTiles(containerId, defs, latest) {
       if (latest.status === "capped") {
         sub = "Not heating (temperature limit)";
         subClass = "sub warning";
+      } else if (latest.status === "warm") {
+        sub = "Waiting to cool down";
+        subClass = "sub warning";
       }
     } else if (def.key === "heater_load_w") {
       valueText = `${latest.heater_load_w} ${def.unit}`;
@@ -80,7 +83,7 @@ function renderTiles(containerId, defs, latest) {
 // "good"/green accent).
 const GOOD_STATUSES = new Set(["increasing", "max"]);
 // Status codes that need attention (shown with the "warning"/amber accent).
-const WARNING_STATUSES = new Set(["capped"]);
+const WARNING_STATUSES = new Set(["capped", "warm"]);
 
 function renderStatusBanner(latest) {
   const banner = document.getElementById("statusBanner");
@@ -316,6 +319,135 @@ function renderLineChart(container, series, opts) {
   });
 }
 
+// Maps every controller status code to a display category so the timeline
+// and legend stay in sync. "good" = surplus actively used, "warning" =
+// commanded but blocked/not heating, "error" = control failure, "neutral" =
+// everything else (off/decreasing/holding, and missing status on old rows
+// from before status tracking was added).
+const STATUS_CATEGORY = {
+  increasing: "good",
+  max: "good",
+  capped: "warning",
+  warm: "warning",
+  error: "error",
+};
+const STATUS_CATEGORY_COLOR = {
+  good: "--success",
+  warning: "--status-warning",
+  error: "--status-error",
+  neutral: "--baseline",
+};
+const STATUS_LEGEND_DEFS = [
+  { name: "Heating from surplus", color: STATUS_CATEGORY_COLOR.good },
+  { name: "Blocked / not heating", color: STATUS_CATEGORY_COLOR.warning },
+  { name: "Control error", color: STATUS_CATEGORY_COLOR.error },
+  { name: "Idle / no surplus", color: STATUS_CATEGORY_COLOR.neutral },
+];
+
+function categoryFor(status) {
+  return STATUS_CATEGORY[status] || "neutral";
+}
+
+// Renders a horizontal colored-segment timeline for the controller's status
+// over time, sharing the same time axis convention as renderLineChart so it
+// lines up visually with the charts above/below it.
+function renderStatusTimeline(container, points, opts) {
+  const { width = 960, height = 60, hours } = opts;
+  const padL = 44, padR = 12, padT = 6, padB = 22;
+  const innerW = width - padL - padR;
+  const barY = padT;
+  const barH = height - padT - padB;
+
+  if (points.length === 0) {
+    container.innerHTML = '<div class="empty-state">No history data for this time range yet.</div>';
+    return;
+  }
+
+  const tMin = points[0].t.getTime();
+  const tMax = Math.max(points[points.length - 1].t.getTime(), tMin + 1);
+  const x = (t) => padL + ((t - tMin) / (tMax - tMin)) * innerW;
+
+  let segmentsSvg = "";
+  points.forEach((p, i) => {
+    const startX = x(p.t.getTime());
+    const endT = i + 1 < points.length ? points[i + 1].t.getTime() : tMax;
+    const endX = Math.max(x(endT), startX + 1);
+    const color = cssVar(STATUS_CATEGORY_COLOR[categoryFor(p.status)]);
+    segmentsSvg += `<rect x="${startX}" y="${barY}" width="${endX - startX}" height="${barH}" fill="${color}" />`;
+  });
+
+  const mutedColor = cssVar("--text-muted");
+  const xTicks = 5;
+  let xAxisSvg = "";
+  for (let i = 0; i <= xTicks; i++) {
+    const t = tMin + ((tMax - tMin) * i) / xTicks;
+    xAxisSvg += `<text x="${x(t)}" y="${height - 6}" text-anchor="middle" font-size="10" fill="${mutedColor}">${formatTick(new Date(t), hours)}</text>`;
+  }
+
+  container.innerHTML = `
+    <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      <rect x="${padL}" y="${barY}" width="${innerW}" height="${barH}" rx="3" fill="${cssVar("--gridline")}" />
+      ${segmentsSvg}
+      ${xAxisSvg}
+      <g class="hover-layer" style="display:none">
+        <line class="crosshair" y1="${barY}" y2="${barY + barH}" stroke="${mutedColor}" stroke-width="1" stroke-dasharray="3,3" />
+      </g>
+      <rect x="${padL}" y="${barY}" width="${innerW}" height="${barH}" fill="transparent" class="hover-target" />
+    </svg>
+  `;
+
+  const svg = container.querySelector("svg");
+  const hoverLayer = svg.querySelector(".hover-layer");
+  const crosshair = svg.querySelector(".crosshair");
+  const target = svg.querySelector(".hover-target");
+  const tooltip = document.createElement("div");
+  tooltip.style.cssText = `
+    position: absolute; pointer-events: none; display: none;
+    background: ${cssVar("--surface-1")}; border: 1px solid ${cssVar("--border")};
+    border-radius: 8px; padding: 6px 10px; font-size: 12px; color: ${cssVar("--text-primary")};
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15); white-space: normal; max-width: 260px; z-index: 10;
+  `;
+  container.style.position = "relative";
+  container.appendChild(tooltip);
+
+  target.addEventListener("mousemove", (evt) => {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = width / rect.width;
+    const mouseX = (evt.clientX - rect.left) * scaleX;
+    const t = tMin + ((mouseX - padL) / innerW) * (tMax - tMin);
+
+    let closest = points[0];
+    let minDiff = Infinity;
+    for (const p of points) {
+      const diff = Math.abs(p.t.getTime() - t);
+      if (diff < minDiff) { minDiff = diff; closest = p; }
+    }
+    const xx = x(closest.t.getTime());
+
+    hoverLayer.style.display = "block";
+    crosshair.setAttribute("x1", xx);
+    crosshair.setAttribute("x2", xx);
+
+    const color = cssVar(STATUS_CATEGORY_COLOR[categoryFor(closest.status)]);
+    tooltip.innerHTML = `
+      <div style="color:${cssVar("--text-secondary")};margin-bottom:4px;">${closest.t.toLocaleString("en-GB")}</div>
+      <div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:6px;"></span>${closest.status_text || closest.status || "unknown"}</div>
+    `;
+    tooltip.style.display = "block";
+
+    const evtRect = container.getBoundingClientRect();
+    let left = ((xx / width) * evtRect.width) + 12;
+    if (left + 260 > evtRect.width) left = ((xx / width) * evtRect.width) - 272;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `4px`;
+  });
+
+  target.addEventListener("mouseleave", () => {
+    hoverLayer.style.display = "none";
+    tooltip.style.display = "none";
+  });
+}
+
 function renderLegend(container, defs) {
   container.innerHTML = defs
     .map(
@@ -372,6 +504,12 @@ async function fetchHistory(hours) {
       yMin: 0,
       yDecimals: 0,
     });
+
+    const statusPoints = points
+      .filter((p) => p.status)
+      .map((p) => ({ t: new Date(p.timestamp), status: p.status, status_text: p.status_text }));
+    renderLegend(document.getElementById("statusLegend"), STATUS_LEGEND_DEFS);
+    renderStatusTimeline(document.getElementById("statusTimelineWrap"), statusPoints, { hours });
 
     const tempSeries = [
       {
