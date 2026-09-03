@@ -431,7 +431,7 @@ function renderStatusTimeline(container, points, opts) {
     const color = cssVar(STATUS_CATEGORY_COLOR[categoryFor(closest.status)]);
     tooltip.innerHTML = `
       <div style="color:${cssVar("--text-secondary")};margin-bottom:4px;">${closest.t.toLocaleString("en-GB")}</div>
-      <div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:6px;"></span>${closest.status_text || closest.status || "unknown"}</div>
+      <div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:6px;"></span>${closest.status_text || closest.status || "No status recorded (before this feature)"}</div>
     `;
     tooltip.style.display = "block";
 
@@ -505,9 +505,14 @@ async function fetchHistory(hours) {
       yDecimals: 0,
     });
 
-    const statusPoints = points
-      .filter((p) => p.status)
-      .map((p) => ({ t: new Date(p.timestamp), status: p.status, status_text: p.status_text }));
+    // Keep every point (not just ones with a status) so the time axis lines
+    // up with the other charts above/below it - rows from before status
+    // tracking existed just render as the neutral/gray category.
+    const statusPoints = points.map((p) => ({
+      t: new Date(p.timestamp),
+      status: p.status,
+      status_text: p.status_text,
+    }));
     renderLegend(document.getElementById("statusLegend"), STATUS_LEGEND_DEFS);
     renderStatusTimeline(document.getElementById("statusTimelineWrap"), statusPoints, { hours });
 
