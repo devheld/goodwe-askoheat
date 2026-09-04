@@ -28,6 +28,16 @@ class SurplusController:
     # trusting small register noise.
     MIN_ACTIVE_LOAD_W = 50
 
+    # The AskoHeat's own thermostat cuts the heating elements off somewhere
+    # around this temperature (matches ASKOHEAT_MAX_TEMP_C in app.js, shown
+    # there as the temperature chart's reference line). Only blame "at its
+    # temperature limit" when the reading is actually close to this - a
+    # step commanded with zero load well below it is something else (seen in
+    # practice: a step-0 restart that doesn't draw power again for tens of
+    # minutes for reasons we can't diagnose from the Modbus data alone).
+    DEVICE_TEMP_LIMIT_C = 65
+    NEAR_DEVICE_LIMIT_MARGIN_C = 5
+
     def __init__(
         self,
         settings: Settings,
@@ -120,18 +130,30 @@ class SurplusController:
         if heater_load_w < 0:
             return "error", "Failed to control the AskoHeat - check the connection"
 
-        # A commanded step that isn't actually drawing power almost always
-        # means the AskoHeat's own thermostat has cut the heating elements
-        # off (see the temperature limit reference line on the temperature
-        # chart). Surface that regardless of what the surplus calculation
-        # says, since "we're commanding heat but nothing is happening" is the
-        # most actionable thing the dashboard can show.
+        # A commanded step that isn't actually drawing power. Surface that
+        # regardless of what the surplus calculation says, since "we're
+        # commanding heat but nothing is happening" is the most actionable
+        # thing the dashboard can show - but only blame the device's
+        # temperature limit when the reading is actually close to it, not
+        # whenever this happens (see DEVICE_TEMP_LIMIT_C above).
         if self._current_step > 0 and heater_load_w < self.MIN_ACTIVE_LOAD_W:
             temp_note = f" ({askoheat_temp_c:.0f}°C)" if askoheat_temp_c is not None else ""
+            near_device_limit = (
+                askoheat_temp_c is not None
+                and askoheat_temp_c >= self.DEVICE_TEMP_LIMIT_C - self.NEAR_DEVICE_LIMIT_MARGIN_C
+            )
+            if near_device_limit:
+                return (
+                    "capped",
+                    f"Step {self._current_step}/{self._settings.step_max} commanded but "
+                    f"AskoHeat is not heating{temp_note} - likely at its temperature limit "
+                    f"(device cuts off around {self.DEVICE_TEMP_LIMIT_C:.0f}°C)",
+                )
             return (
                 "capped",
                 f"Step {self._current_step}/{self._settings.step_max} commanded but "
-                f"AskoHeat is not heating{temp_note} - likely at its temperature limit",
+                f"AskoHeat is not heating{temp_note} - cause unclear, well below the "
+                f"device's ~{self.DEVICE_TEMP_LIMIT_C:.0f}°C temperature limit",
             )
 
         if blocked_by_temp:
