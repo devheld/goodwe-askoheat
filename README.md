@@ -5,10 +5,11 @@ power into a resistive water heater (an [Askoma AskoHeat+](https://www.askoma.co
 instead of letting it go to waste, based on live data from a GoodWe hybrid
 inverter and battery system.
 
-It reads PV production, household consumption, battery charge/discharge and
-grid flow from the GoodWe SEMS cloud API, decides whether there is genuine
-surplus power available, and steps the AskoHeat's heating elements up or
-down (0-7) via Modbus TCP accordingly. A FastAPI backend keeps a history in
+It reads PV production, household consumption, battery charge/discharge,
+state of charge and grid flow from the GoodWe inverter, decides whether
+there is genuine surplus power left over once the battery has been charged,
+and steps the AskoHeat's heating elements up or down (0-7) via Modbus TCP
+accordingly - see [Control logic](#control-logic). A FastAPI backend keeps a history in
 SQLite and serves a live/history dashboard.
 
 ## Why this exists
@@ -28,6 +29,44 @@ demand is now covered by the AskoHeat instead.
 
 If the feed-in restriction is ever lifted, this trade-off should be
 revisited - grid export may then become preferable to resistive heating.
+
+## Control logic
+
+**The house battery has priority over the water tank.** No surplus is
+diverted into the AskoHeat until the battery has reached
+`BATTERY_FULL_SOC_PCT` (95% by default, read from the inverter's BMS
+register 37007). This matters from autumn onwards: a day's surplus is then
+no longer enough to both fill the battery and heat the tank, and stored
+energy is worth more than hot water - it still covers the evening load at
+1:1, whereas resistive heating cannot be turned back into electricity. In
+summer the battery is usually full by midday anyway, so this barely changes
+when heating starts.
+
+Once the battery is full, the heater steps up or down by one step per poll:
+
+| Situation | Action |
+| --- | --- |
+| SOC below the threshold (or unreadable) | step down - battery first |
+| Battery discharging, or importing from the grid | step down - the heater is taking more than is available |
+| Exporting at least `SURPLUS_STEP_MARGIN_KW` | step up |
+| Exporting less than that | hold - the smallest step (~600W) would not fit |
+| No grid flow, battery full and idle | step up - see curtailment below |
+
+That last row is the normal case on this installation, which runs at 0%
+feed-in: with the battery full, the inverter curtails the PV strings instead
+of exporting, so the surplus never shows up in the readings - production
+simply tracks the load. The controller therefore adds a step and lets the
+inverter release some of the curtailed production to cover it; if there was
+nothing left after all, the battery starts discharging and the step is taken
+straight back on the next poll.
+
+A running heating cycle is allowed to continue down to
+`BATTERY_KEEP_HEATING_SOC_PCT` (90%) before the battery takes priority
+again. Without that gap the heater's own load - which is exactly what stops
+the battery from charging further - would switch heating on and off around a
+single threshold every few minutes. A second, independent hysteresis applies
+to the tank: a *new* cycle only starts at or below `HEATING_START_MAX_TEMP_C`,
+while a running one is left to the AskoHeat's own ~65°C cutoff.
 
 ## Architecture
 

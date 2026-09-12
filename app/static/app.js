@@ -3,6 +3,7 @@ const TILE_DEFS = [
   { key: "consumption_kw", label: "Consumption", unit: "kW", color: "--series-cons" },
   { key: "battery_charge_kw", label: "Battery (Charging)", unit: "kW", color: "--series-batt-charge" },
   { key: "battery_discharge_kw", label: "Battery (Discharging)", unit: "kW", color: "--series-batt-discharge" },
+  { key: "battery_soc_pct", label: "Battery Charge Level", unit: "%", color: "--series-soc" },
   { key: "grid_kw", label: "Grid", unit: "kW", color: "--series-grid" },
 ];
 
@@ -11,6 +12,12 @@ const ASKO_TILE_DEFS = [
   { key: "heater_load_w", label: "AskoHeat Load (Actual)", unit: "W", color: "--series-load" },
   { key: "askoheat_temp_c", label: "AskoHeat Temperature", unit: "°C", color: "--series-temp" },
 ];
+
+// SOC the battery has to reach before any surplus is used for heating -
+// the battery is charged first (BATTERY_FULL_SOC_PCT in .env). Shown as a
+// reference line on the charge level chart, which explains why the heater
+// stays off on days when the battery never gets there.
+const BATTERY_FULL_SOC_PCT = 95;
 
 // AskoHeat's own temperature limit (its internal thermostat cuts power to
 // the heating elements regardless of the commanded step) - shown as a
@@ -54,9 +61,18 @@ function renderTiles(containerId, defs, latest) {
       def.key === "grid_kw"
     ) {
       valueText = `${fmt(latest[def.key])} ${def.unit}`;
+    } else if (def.key === "battery_soc_pct") {
+      valueText = latest.battery_soc_pct === null || latest.battery_soc_pct === undefined
+        ? "-"
+        : `${fmt(latest.battery_soc_pct, 0)} ${def.unit}`;
+      if (latest.status === "battery") {
+        sub = `Charging to ${BATTERY_FULL_SOC_PCT}% before heating`;
+      }
     } else if (def.key === "step") {
       valueText = `${latest.step}${def.unit}`;
-      if (latest.status === "capped") {
+      if (latest.status === "battery") {
+        sub = "Battery has priority";
+      } else if (latest.status === "capped") {
         sub = "Not heating (temperature limit)";
         subClass = "sub warning";
       } else if (latest.status === "warm") {
@@ -81,7 +97,7 @@ function renderTiles(containerId, defs, latest) {
 
 // Status codes that mean the surplus is actively being used (shown with the
 // "good"/green accent).
-const GOOD_STATUSES = new Set(["increasing", "max"]);
+const GOOD_STATUSES = new Set(["increasing", "max", "balanced"]);
 // Status codes that need attention (shown with the "warning"/amber accent).
 const WARNING_STATUSES = new Set(["capped", "warm"]);
 
@@ -320,25 +336,30 @@ function renderLineChart(container, series, opts) {
 }
 
 // Maps every controller status code to a display category so the timeline
-// and legend stay in sync. "good" = surplus actively used, "warning" =
+// and legend stay in sync. "good" = surplus actively used, "battery" = the
+// battery is being charged first and heating deliberately waits, "warning" =
 // commanded but blocked/not heating, "error" = control failure, "neutral" =
 // everything else (off/decreasing/holding, and missing status on old rows
 // from before status tracking was added).
 const STATUS_CATEGORY = {
   increasing: "good",
   max: "good",
+  balanced: "good",
+  battery: "battery",
   capped: "warning",
   warm: "warning",
   error: "error",
 };
 const STATUS_CATEGORY_COLOR = {
   good: "--success",
+  battery: "--series-soc",
   warning: "--status-warning",
   error: "--status-error",
   neutral: "--baseline",
 };
 const STATUS_LEGEND_DEFS = [
   { name: "Heating from surplus", color: STATUS_CATEGORY_COLOR.good },
+  { name: "Charging battery (priority)", color: STATUS_CATEGORY_COLOR.battery },
   { name: "Blocked / not heating", color: STATUS_CATEGORY_COLOR.warning },
   { name: "Control error", color: STATUS_CATEGORY_COLOR.error },
   { name: "Idle / no surplus", color: STATUS_CATEGORY_COLOR.neutral },
@@ -472,6 +493,27 @@ async function fetchHistory(hours) {
     renderLegend(document.getElementById("powerLegend"), POWER_SERIES_DEFS);
     renderLineChart(document.getElementById("powerChartWrap"), powerSeries, { hours, unit: "kW", yMin: 0 });
 
+    // Rows from before the battery-priority logic have no SOC - filtered
+    // out rather than drawn as 0, which would look like an empty battery.
+    const socSeries = [
+      {
+        name: "Charge Level",
+        color: "--series-soc",
+        points: points
+          .filter((p) => p.battery_soc_pct !== null && p.battery_soc_pct !== undefined)
+          .map((p) => ({ t: new Date(p.timestamp), v: p.battery_soc_pct })),
+      },
+    ];
+    renderLineChart(document.getElementById("socChartWrap"), socSeries, {
+      hours,
+      height: 140,
+      unit: "%",
+      yMin: 0,
+      yMax: 100,
+      yDecimals: 0,
+      refLine: { value: BATTERY_FULL_SOC_PCT, label: `Heating from ${BATTERY_FULL_SOC_PCT}%` },
+    });
+
     const stepSeries = [
       {
         name: "Step (Target)",
@@ -536,6 +578,7 @@ async function fetchHistory(hours) {
     });
   } catch (err) {
     document.getElementById("powerChartWrap").innerHTML = `<div class="empty-state">Failed to load history (${err.message})</div>`;
+    document.getElementById("socChartWrap").innerHTML = "";
     document.getElementById("stepChartWrap").innerHTML = "";
     document.getElementById("loadChartWrap").innerHTML = "";
     document.getElementById("tempChartWrap").innerHTML = "";

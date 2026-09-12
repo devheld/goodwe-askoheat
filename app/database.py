@@ -15,6 +15,7 @@ class Reading:
     battery_discharge_kw: float
     grid_kw: float
     battery_charging: bool
+    battery_soc_pct: float | None
     step: int
     heater_load_w: int
     askoheat_temp_c: float
@@ -60,14 +61,19 @@ class HistoryStore:
                 conn.execute("ALTER TABLE readings ADD COLUMN status TEXT")
             if "status_text" not in existing_columns:
                 conn.execute("ALTER TABLE readings ADD COLUMN status_text TEXT")
+            # Same for the battery SOC, added with the battery-priority control
+            # logic - rows recorded before that keep NULL and are skipped by
+            # the dashboard's SOC chart.
+            if "battery_soc_pct" not in existing_columns:
+                conn.execute("ALTER TABLE readings ADD COLUMN battery_soc_pct REAL")
 
     def insert(self, reading: Reading) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO readings
-                (timestamp, pv_kw, consumption_kw, battery_charge_kw, battery_discharge_kw, grid_kw, battery_charging, step, heater_load_w, askoheat_temp_c, status, status_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (timestamp, pv_kw, consumption_kw, battery_charge_kw, battery_discharge_kw, grid_kw, battery_charging, battery_soc_pct, step, heater_load_w, askoheat_temp_c, status, status_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     reading.timestamp,
@@ -77,6 +83,7 @@ class HistoryStore:
                     reading.battery_discharge_kw,
                     reading.grid_kw,
                     int(reading.battery_charging),
+                    reading.battery_soc_pct,
                     reading.step,
                     reading.heater_load_w,
                     reading.askoheat_temp_c,

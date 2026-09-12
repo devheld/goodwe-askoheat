@@ -14,8 +14,14 @@ logger = logging.getLogger(__name__)
 
 class SurplusController:
     """Core control loop: increases/decreases the AskoHeat's heater step
-    step by step, depending on whether there is PV surplus (no grid
-    import/export and the battery is charging rather than discharging).
+    step by step, depending on whether there is PV surplus left over once
+    the house battery has been charged.
+
+    The battery has priority: it is charged first, and only once it has
+    reached battery_full_soc_pct does any surplus go into the water tank.
+    From that point the battery no longer absorbs the surplus, which is
+    exported instead - so the heater is regulated against grid feed-in.
+    See _decide() for the full rule set.
 
     Runs on its own background thread (not as an asyncio task): the GoodWe
     and Modbus libraries are synchronous, and set_step() internally sleeps
@@ -115,9 +121,71 @@ class SurplusController:
         logger.info("Starting from the AskoHeat's current step: %s", clamped_step)
         return clamped_step
 
+    def _battery_full_threshold(self, heating: bool) -> float:
+        """SOC at or above which the battery counts as full enough to allow
+        heating.
+
+        Lower while a heating cycle is already running: the heater's own load
+        is exactly what stops the battery from charging further and pulls the
+        SOC back down, so a single threshold would switch heating on and off
+        every few minutes.
+        """
+        if heating:
+            return self._settings.battery_keep_heating_soc_pct
+        return self._settings.battery_full_soc_pct
+
+    def _decide(self, readings, step_before: int) -> tuple[str, str]:
+        """decides this tick's step change - "up", "down" or "hold" - along
+        with a short reason code the status text is built from.
+
+        Battery first: no surplus goes into the water tank before the house
+        battery has reached battery_full_soc_pct (battery_keep_heating_soc_pct
+        while a cycle is already running, see _battery_full_threshold). That
+        matters from autumn onwards, when a day's surplus is no longer enough
+        to both fill the battery and heat the tank - in summer the battery is
+        full by midday anyway and this barely changes when heating starts.
+
+        Once the battery is full it stops absorbing the surplus, and what
+        happens to that surplus then decides how the heater is regulated
+        (grid_kw is positive while exporting, negative while importing):
+          - importing, or the battery discharging to cover the heater: the
+            heater is taking more than is available, drop a step;
+          - exporting at least surplus_step_margin_kw: clear surplus, add a
+            step;
+          - exporting less than that: hold, since the smallest step (~600W)
+            would not fit into what is left and would pull from the grid;
+          - no grid flow at all with the battery full and idle: this is the
+            important case on this installation, which runs at 0% feed-in
+            (see README). The inverter curtails the PV strings instead of
+            exporting, so the surplus is invisible in the readings - PV just
+            tracks the load. Add a step and let the inverter release some of
+            the curtailed production to cover it; if it turns out there was
+            nothing left, the battery starts discharging and the rule above
+            takes the step straight back.
+        """
+        heating = step_before > self._settings.step_min
+        soc = readings.battery_soc_pct
+
+        if soc is None:
+            # An unknown SOC counts as "not full", which keeps the battery's
+            # priority intact instead of heating on a guess.
+            return "down", "soc_unknown"
+        if soc < self._battery_full_threshold(heating):
+            return "down", "charging_battery"
+
+        if not readings.battery_charging:
+            return "down", "battery_discharging"
+        if readings.grid_kw <= -self._settings.zero_threshold_kw:
+            return "down", "grid_import"
+        if readings.grid_kw >= self._settings.surplus_step_margin_kw:
+            return "up", "surplus"
+        if readings.grid_kw >= self._settings.zero_threshold_kw:
+            return "hold", "balanced"
+        return "up", "surplus_curtailed"
+
     def _describe_status(
         self,
-        has_surplus: bool,
+        reason: str,
         readings,
         step_before: int,
         heater_load_w: int,
@@ -164,29 +232,89 @@ class SurplusController:
                 f"- waiting to cool down before starting to heat again",
             )
 
+        soc_text = (
+            f"{readings.battery_soc_pct:.0f}%"
+            if readings.battery_soc_pct is not None
+            else "unknown"
+        )
+
         if is_initial_hold:
-            surplus_note = "surplus available" if has_surplus else "no surplus right now"
+            condition = {
+                "surplus": "surplus available",
+                "surplus_curtailed": "battery full and grid balanced",
+                "balanced": "surplus and heater balanced",
+                "charging_battery": f"battery still charging, {soc_text}",
+                "soc_unknown": "battery SOC unavailable",
+                "battery_discharging": "battery discharging",
+                "grid_import": "importing from the grid",
+            }[reason]
             return (
                 "holding",
                 f"Resumed at step {self._current_step}/{self._settings.step_max} "
-                f"(read from device, {surplus_note}) - adjusting from the next cycle",
+                f"(read from device, {condition}) - adjusting from the next cycle",
             )
 
-        if has_surplus:
+        heater_note = (
+            f"reducing heater step to {self._current_step}"
+            if self._current_step < step_before
+            else "heater off"
+        )
+
+        if reason == "soc_unknown":
+            return (
+                "battery",
+                f"Battery SOC could not be read - treating the battery as not full, "
+                f"so it keeps priority ({heater_note})",
+            )
+
+        if reason == "charging_battery":
+            # Two different thresholds depending on whether a heating cycle
+            # was running, so say which one is actually being applied.
+            was_heating = step_before > self._settings.step_min
+            threshold = self._battery_full_threshold(was_heating)
+            goal = (
+                f"needs {threshold:.0f}% to keep heating"
+                if was_heating
+                else f"heating starts at {threshold:.0f}%"
+            )
+            return (
+                "battery",
+                f"Battery has priority: charging at {soc_text}, {goal} ({heater_note})",
+            )
+
+        if reason in ("surplus", "surplus_curtailed"):
+            source = (
+                f"exporting {readings.grid_kw:.2f}kW"
+                if reason == "surplus"
+                else "battery full and idle, so PV is being curtailed"
+            )
             if self._current_step > step_before:
-                return "increasing", "PV surplus available - increasing heater step"
-            return "max", "PV surplus available - heater already at maximum step"
+                return (
+                    "increasing",
+                    f"Battery charged ({soc_text}), {source} - increasing heater step",
+                )
+            return (
+                "max",
+                f"Battery charged ({soc_text}), {source} - heater already at "
+                f"maximum step",
+            )
 
-        if not readings.battery_charging:
-            reason = "battery discharging"
-        elif abs(readings.grid_kw) >= self._settings.zero_threshold_kw:
-            reason = "grid flow detected"
-        else:
-            reason = "no surplus"
+        if reason == "balanced":
+            return (
+                "balanced",
+                f"Battery charged ({soc_text}), surplus and heater balanced "
+                f"({readings.grid_kw:+.2f}kW grid) - holding step "
+                f"{self._current_step}/{self._settings.step_max}",
+            )
 
+        cause = (
+            "battery discharging"
+            if reason == "battery_discharging"
+            else f"importing {abs(readings.grid_kw):.2f}kW from the grid"
+        )
         if self._current_step < step_before:
-            return "decreasing", f"No surplus ({reason}) - reducing heater step"
-        return "off", f"No surplus ({reason}) - heater off"
+            return "decreasing", f"No surplus ({cause}) - reducing heater step"
+        return "off", f"No surplus ({cause}) - heater off"
 
     def _tick(self) -> None:
         try:
@@ -205,23 +333,18 @@ class SurplusController:
             logger.exception("Failed to read the AskoHeat temperature")
             askoheat_temp_c = None
 
-        # Surplus only when there is no grid import/export AND the battery
-        # is charging rather than discharging (battery_charging comes from
-        # the real measured battery power read by GoodWeModbusReader).
-        has_surplus = (
-            abs(readings.grid_kw) < self._settings.zero_threshold_kw
-            and readings.battery_charging
-        )
-
         step_before = self._current_step
         is_initial_hold = self._pending_initial_hold
         blocked_by_temp = False
+        # Battery before water tank, then feed-in regulation - see _decide().
+        action, reason = self._decide(readings, step_before)
+
         if is_initial_hold:
             # First tick after (re)reading the step from the device: hold it
             # and just observe this cycle's conditions instead of blindly
             # nudging it up or down - see _describe_status's "holding" case.
             self._pending_initial_hold = False
-        elif has_surplus:
+        elif action == "up":
             # Hysteresis: only START a new heating cycle (step 0 -> >0) while
             # the tank is at or below heating_start_max_temp_c. Once heating
             # is already running (step > 0), keep adjusting it normally and
@@ -237,8 +360,9 @@ class SurplusController:
                 blocked_by_temp = True
             else:
                 self._current_step = min(self._current_step + 1, self._settings.step_max)
-        else:
+        elif action == "down":
             self._current_step = max(self._current_step - 1, self._settings.step_min)
+        # action == "hold": leave the step where it is (see _decide's dead band)
 
         try:
             heater_load_w = self._askoheat.set_step(self._current_step)
@@ -247,7 +371,7 @@ class SurplusController:
             heater_load_w = -1
 
         status, status_text = self._describe_status(
-            has_surplus,
+            reason,
             readings,
             step_before,
             heater_load_w,
@@ -265,6 +389,7 @@ class SurplusController:
             battery_discharge_kw=readings.battery_discharge_kw,
             grid_kw=readings.grid_kw,
             battery_charging=readings.battery_charging,
+            battery_soc_pct=readings.battery_soc_pct,
             step=self._current_step,
             heater_load_w=heater_load_w,
             askoheat_temp_c=askoheat_temp_c,
@@ -282,6 +407,7 @@ class SurplusController:
                 "battery_discharge_kw": readings.battery_discharge_kw,
                 "grid_kw": readings.grid_kw,
                 "battery_charging": readings.battery_charging,
+                "battery_soc_pct": readings.battery_soc_pct,
                 "step": self._current_step,
                 "heater_load_w": heater_load_w,
                 "askoheat_temp_c": askoheat_temp_c,
@@ -290,12 +416,13 @@ class SurplusController:
             }
 
         logger.info(
-            "step=%s pv=%.2fkW consumption=%.2fkW battery_charge=%.2fkW battery_discharge=%.2fkW grid=%.2fkW -> askoheat_load=%sW temp=%sC [%s] %s",
+            "step=%s pv=%.2fkW consumption=%.2fkW battery_charge=%.2fkW battery_discharge=%.2fkW soc=%s%% grid=%.2fkW -> askoheat_load=%sW temp=%sC [%s] %s",
             self._current_step,
             readings.pv_kw,
             readings.consumption_kw,
             readings.battery_charge_kw,
             readings.battery_discharge_kw,
+            f"{readings.battery_soc_pct:.0f}" if readings.battery_soc_pct is not None else "?",
             readings.grid_kw,
             heater_load_w,
             f"{askoheat_temp_c:.1f}" if askoheat_temp_c is not None else "?",

@@ -34,6 +34,20 @@ class Settings:
     # already running it is left to the device's own (higher) temperature
     # limit rather than stopped here - see SurplusController._tick().
     heating_start_max_temp_c: float
+    # Battery priority: heating only starts once the battery has reached
+    # battery_full_soc_pct, and a running heating cycle is stopped again when
+    # the SOC falls below battery_keep_heating_soc_pct. The gap between the
+    # two is the hysteresis that keeps the heater from switching on and off
+    # around a single threshold - the heater's own load is what pushes the
+    # SOC back down in the first place.
+    battery_full_soc_pct: float
+    battery_keep_heating_soc_pct: float
+    # Only relevant while the grid connection actually allows export (this
+    # installation is at 0% feed-in, see README): with the battery full and
+    # power being exported, another heater step is added once at least this
+    # much is going to the grid. The AskoHeat's smallest step is ~600W, so a
+    # smaller margin would overshoot into grid import.
+    surplus_step_margin_kw: float
 
     db_path: Path
 
@@ -55,6 +69,11 @@ def load_settings() -> Settings:
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),
         zero_threshold_kw=float(os.environ.get("ZERO_THRESHOLD_KW", "0.01")),
         heating_start_max_temp_c=float(os.environ.get("HEATING_START_MAX_TEMP_C", "55")),
+        battery_full_soc_pct=float(os.environ.get("BATTERY_FULL_SOC_PCT", "95")),
+        battery_keep_heating_soc_pct=float(
+            os.environ.get("BATTERY_KEEP_HEATING_SOC_PCT", "90")
+        ),
+        surplus_step_margin_kw=float(os.environ.get("SURPLUS_STEP_MARGIN_KW", "0.6")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/askoheat.db"),
     )
 

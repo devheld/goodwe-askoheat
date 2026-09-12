@@ -22,6 +22,7 @@
     --series-pv:              #2a78d6; /* blue, slot 1 */
     --series-cons:            #eb6834; /* orange, slot 2 */
     --series-batt-charge:     #1baf7a; /* aqua, slot 3 */
+    --series-soc:             #0f8a93; /* teal, battery charge level */
     --series-batt-discharge:  #eda100; /* yellow, slot 4 */
     --series-grid:            #e87ba4; /* magenta, slot 5 */
     --series-temp:            #008300; /* green, slot 6 */
@@ -46,6 +47,7 @@
       --series-pv:              #3987e5;
       --series-cons:            #d95926;
       --series-batt-charge:     #199e70;
+      --series-soc:             #2fb3bd;
       --series-batt-discharge:  #c98500;
       --series-grid:            #d55181;
       --series-temp:            #008300;
@@ -70,6 +72,7 @@
     --series-pv:              #3987e5;
     --series-cons:            #d95926;
     --series-batt-charge:     #199e70;
+    --series-soc:             #2fb3bd;
     --series-batt-discharge:  #c98500;
     --series-grid:            #d55181;
     --series-temp:            #008300;
@@ -271,6 +274,11 @@
     <h2>Power</h2>
     <div class="legend" id="powerLegend"></div>
     <div id="powerChartWrap"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>Battery Charge Level</h2>
+    <div id="socChartWrap"></div>
   </div>
 
   <div class="chart-card">

@@ -20,6 +20,10 @@ class Readings:
     battery_discharge_kw: float
     grid_kw: float
     battery_charging: bool
+    # BMS state of charge in percent, or None when the SOC read failed - the
+    # controller treats an unknown SOC as "battery not full" (see
+    # SurplusController._tick), which keeps the battery's priority.
+    battery_soc_pct: float | None
 
 
 class GoodWeModbusReader:
@@ -38,7 +42,11 @@ class GoodWeModbusReader:
       - grid_kw: register 35139 "AC ActivePower" - falls back to the
         inverter's own on-grid port measurement when no external smart meter
         is connected (which is the case on this installation), so this is
-        the real grid import/export power, not a fixed 0.
+        the real grid import/export power, not a fixed 0. Positive means
+        export (feed-in), negative means import - confirmed on recorded
+        history, where pv - battery - load equals this value exactly on
+        every row. SurplusController relies on that sign convention once
+        the battery is full and the surplus goes to the grid.
       - battery_charge_kw/battery_discharge_kw: register 35182 "Pbattery1"
         (signed), split into two always-non-negative values for display -
         real measured battery power, no derivation or bias-correction
@@ -48,6 +56,10 @@ class GoodWeModbusReader:
         confirmed by checking that PV - load - grid - Pbattery1 balances to
         ~0 on live data, whereas without the sign flip it was off by several
         kW.
+      - battery_soc_pct: register 37007 "SOC" from the BMS information
+        block. That block is far outside the 35103+ block below, so it needs
+        its own request - see _read_soc_pct(), which deliberately degrades to
+        None instead of failing the whole read.
 
     battery_charging still applies zero_threshold_kw as a tolerance around 0
     (not a hard >= 0 cut): Ibattery1's resolution is 0.1A, which at this
@@ -70,6 +82,9 @@ class GoodWeModbusReader:
 
     BASE_REGISTER = 35103
     READ_COUNT = 82  # covers up to 35184 (Battery1 Mode), plenty of margin
+
+    # BMS information block ("SOC", first group battery capacity, in %).
+    SOC_REGISTER = 37007
 
     MAX_RETRIES = 2
     RETRY_DELAY_S = 1
@@ -126,17 +141,49 @@ class GoodWeModbusReader:
         raise last_exc
 
     def read(self) -> Readings:
-        def _do() -> Readings:
+        def _do() -> list[int]:
             result = self._client.read_holding_registers(
                 self.BASE_REGISTER, count=self.READ_COUNT, device_id=self._slave_id
             )
             if result.isError():
                 raise IOError(f"GoodWe Modbus read returned an error: {result}")
-            return self._decode(result.registers)
+            return result.registers
 
-        return self._with_retry("read", _do)
+        regs = self._with_retry("read", _do)
+        return self._decode(regs, self._read_soc_pct())
 
-    def _decode(self, regs: list[int]) -> Readings:
+    def _read_soc_pct(self) -> float | None:
+        """reads the BMS state of charge (register 37007), which sits well
+        outside the main 35103+ block and therefore needs its own request.
+
+        Returns None rather than raising when the read fails or the value is
+        implausible: the controller reads an unknown SOC as "battery not
+        full" and leaves the heater off, so a failing SOC read costs heating
+        time but never overrides the battery's priority - whereas letting it
+        propagate would drop the whole tick, including the power readings
+        that are perfectly fine.
+        """
+
+        def _do() -> int:
+            result = self._client.read_holding_registers(
+                self.SOC_REGISTER, count=1, device_id=self._slave_id
+            )
+            if result.isError():
+                raise IOError(f"GoodWe SOC read returned an error: {result}")
+            return result.registers[0]
+
+        try:
+            soc = float(self._with_retry("SOC read", _do))
+        except Exception:
+            logger.exception("Failed to read the battery SOC")
+            return None
+
+        if not 0 <= soc <= 100:
+            logger.warning("GoodWe reported an implausible SOC of %s%% - ignoring", soc)
+            return None
+        return soc
+
+    def _decode(self, regs: list[int], battery_soc_pct: float | None) -> Readings:
         def offset(addr: int) -> int:
             return addr - self.BASE_REGISTER
 
@@ -168,4 +215,5 @@ class GoodWeModbusReader:
             battery_discharge_kw=battery_discharge_kw,
             grid_kw=grid_kw,
             battery_charging=battery_charging,
+            battery_soc_pct=battery_soc_pct,
         )
