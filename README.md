@@ -70,8 +70,8 @@ while a running one is left to the AskoHeat's own ~65°C cutoff.
 
 ## Architecture
 
-- `app/goodwe_client.py` - `GoodWeCloudReader`: reads PV/consumption/battery/
-  grid via the GoodWe SEMS cloud API
+- `app/goodwe_client.py` - `GoodWeModbusReader`: reads PV/consumption/
+  battery/state of charge/grid from the inverter over local Modbus TCP
 - `app/askoheat_client.py` - `AskoHeatController`: sets the AskoHeat's heater
   step and reads back load/temperature over Modbus TCP
 - `app/controller.py` - `SurplusController`: the core control loop - on every
@@ -132,8 +132,16 @@ dongle@sn,dtls_port:8899,<serial>
 Newer GoodWe dongle firmware requires DTLS-encrypted communication on the
 data port, which no current open-source tool supports (no published pre-
 shared key). Local Modbus TCP (port 502) is open on the dongle but doesn't
-respond to standard Modbus requests either. This is left as a known
-limitation - see below.
+respond to standard Modbus requests either.
+
+**Resolved afterwards, and this is what the project uses today:** GoodWe
+support can enable Modbus/TCP on the data logger on request. Once they did,
+the ET-series register map worked directly over port 502 and the cloud
+reader was dropped for `GoodWeModbusReader` - real measured values instead
+of the derivations and bias corrections the cloud detour needed. The DTLS
+problem above still stands for the UDP protocol; it was the Modbus route
+that got opened up, not the encrypted one. Note that this is a per-device
+change by the manufacturer, not something you can configure yourself.
 
 ### 3. Finding the right AskoHeat Modbus registers
 
@@ -180,20 +188,93 @@ focused for near-real-time updates.
 
 ```
 pip install -r requirements.txt
-cp .env.example .env   # fill in your SEMS account, station ID and AskoHeat details
+cp .env.example .env   # fill in the addresses of your inverter and AskoHeat
 uvicorn app.main:app --reload
 ```
 
-Then open `http://127.0.0.1:8000`.
+Then open `http://127.0.0.1:8000`. Note that this talks to the real devices
+as soon as it starts, heater writes included - see the warning under
+[Deployment](#deployment) about running two instances at once.
+
+## Deployment
+
+In day-to-day use this runs as a long-running service on a small always-on
+machine (a Raspberry Pi is plenty). It has to sit on the same network as the
+inverter and the AskoHeat, since both are reached over local Modbus TCP - it
+needs no access to the internet at all.
+
+Unlike the development command above, drop `--reload` and bind to the
+network so the dashboard is reachable from other devices:
+
+```
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Keep it running across reboots with a service manager. A minimal systemd
+unit, with the placeholders filled in for the target machine:
+
+```ini
+[Unit]
+Description=AskoHeat Manager
+After=network-online.target
+
+[Service]
+WorkingDirectory=<path to this checkout>
+ExecStart=<path to the virtualenv>/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+User=<service account>
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Run only one instance at a time.** Every instance drives the same heater,
+so a second one started for testing will fight the first over the heater
+step, each undoing the other's writes every poll. Stop the service before
+running the app by hand against the real devices.
+
+### Updating
+
+```
+git pull
+sudo systemctl restart <service name>
+```
+
+Three things worth knowing about an update:
+
+- **The database migrates itself** on startup. Columns are added additively
+  and rows recorded before they existed keep `NULL`, so there is nothing to
+  migrate by hand and no reason to delete the history.
+- **`.env` never travels with a pull** - it is git-ignored and stays on the
+  machine. A new setting therefore has to be added there, or left to its
+  default in `app/config.py`, where every setting has one.
+- **Hard-reload the dashboard** (`Ctrl+Shift+R`) after any change under
+  `app/static/`. Otherwise the browser keeps serving the cached `app.js` and
+  the page looks unchanged even though the deployment succeeded.
+
+To confirm the controller came back up healthy, check that the poll log line
+shows real values rather than `?` placeholders:
+
+```
+step=3 pv=7.08kW consumption=0.93kW battery_charge=6.07kW battery_discharge=0.00kW soc=62% grid=0.03kW -> askoheat_load=1900W temp=52.3C [battery] ...
+```
+
+A `soc=?%` there means the SOC register could not be read. The controller
+then deliberately treats the battery as not full and leaves the heater off,
+so this fails towards no heating rather than towards draining the battery -
+see [Control logic](#control-logic).
 
 ## Known limitations
 
-- The GoodWe SEMS cloud API only updates every few minutes, not in real
-  time - the poll interval is tuned accordingly, so this isn't a truly
-  real-time controller.
-- No local/real-time access to the inverter is currently possible (see
-  problem #2 above) - everything goes through the cloud.
+- Local Modbus/TCP is not enabled on a GoodWe data logger by default and
+  cannot be switched on from the outside - GoodWe support has to enable it
+  per device (see problem #2). Without that, this approach does not work at
+  all, and the cloud API is not a usable substitute.
+- The heater is regulated one step per poll, so it takes a few minutes to
+  work its way up to the right step after a change in conditions. That is
+  deliberate - the steps switch mechanical relays in the AskoHeat.
 - Register addresses and the value-derivation formulas above are specific to
   this particular installation (GoodWe GW15K-ETA-G20 hybrid inverter +
   AskoHeat+) and firmware version, and may not generalize to other models.
-- `.env` holds real credentials and is git-ignored - never commit it.
+- `.env` holds the addresses of your own devices and is git-ignored - never
+  commit it.
