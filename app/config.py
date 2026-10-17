@@ -25,6 +25,13 @@ class Settings:
     askoheat_slave_id: int
     askoheat_delay_s: int
 
+    # GoodWe AC EV charger (2nd gen). Read-only and entirely optional - the
+    # dashboard shows it when it answers and says so when it doesn't. Set
+    # WALLBOX_HOST empty to leave it out altogether.
+    wallbox_host: str
+    wallbox_port: int
+    wallbox_slave_id: int
+
     step_min: int
     step_max: int
     poll_interval_s: int
@@ -64,6 +71,9 @@ def load_settings() -> Settings:
         askoheat_temp_register=int(os.environ.get("ASKOHEAT_TEMP_REGISTER", "325")),
         askoheat_slave_id=int(os.environ.get("ASKOHEAT_SLAVE_ID", "1")),
         askoheat_delay_s=int(os.environ.get("ASKOHEAT_DELAY_S", "10")),
+        wallbox_host=os.environ.get("WALLBOX_HOST", "192.168.1.172"),
+        wallbox_port=int(os.environ.get("WALLBOX_PORT", "502")),
+        wallbox_slave_id=int(os.environ.get("WALLBOX_SLAVE_ID", "247")),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),

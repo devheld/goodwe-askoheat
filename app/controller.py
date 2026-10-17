@@ -8,6 +8,7 @@ from .askoheat_client import AskoHeatController
 from .config import Settings
 from .database import HistoryStore, Reading
 from .goodwe_client import GoodWeModbusReader
+from .wallbox_client import GoodWeWallboxReader
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,16 @@ class SurplusController:
         reader: GoodWeModbusReader,
         askoheat: AskoHeatController,
         store: HistoryStore,
+        wallbox: GoodWeWallboxReader | None = None,
     ) -> None:
         self._settings = settings
         self._reader = reader
         self._askoheat = askoheat
         self._store = store
+        # Read-only passenger on the control loop: polled for the dashboard,
+        # never consulted for a heating decision. See GoodWeWallboxReader on
+        # why its connection is held open rather than reopened per tick.
+        self._wallbox = wallbox
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -84,6 +90,8 @@ class SurplusController:
         finally:
             self._askoheat.close()
             self._reader.close()
+            if self._wallbox is not None:
+                self._wallbox.close()
 
     def _connect_with_retry(self, device_name: str, connect_fn) -> None:
         """connects to a device, retrying every poll_interval_s on failure
@@ -380,6 +388,11 @@ class SurplusController:
             blocked_by_temp,
         )
 
+        # Dashboard-only, and deliberately after the heating decision above so
+        # a slow or unreachable wallbox can never delay or change it. The
+        # client swallows its own errors and reports them as a payload.
+        wallbox = self._wallbox.as_dict() if self._wallbox is not None else None
+
         timestamp = datetime.now(timezone.utc).isoformat()
         reading = Reading(
             timestamp=timestamp,
@@ -413,6 +426,7 @@ class SurplusController:
                 "askoheat_temp_c": askoheat_temp_c,
                 "status": status,
                 "status_text": status_text,
+                "wallbox": wallbox,
             }
 
         logger.info(

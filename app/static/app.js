@@ -95,6 +95,91 @@ function renderTiles(containerId, defs, latest) {
   }
 }
 
+// The wallbox panel is rendered by hand rather than through renderTiles:
+// its values are a nested object with mixed shapes (triples of phase values,
+// a raw-register map, an offline state) that the generic tile renderer has
+// no reason to learn about.
+function renderWallbox(wb) {
+  const title = document.getElementById("wallboxTitle");
+  const wrap = document.getElementById("tilesWallbox");
+  const note = document.getElementById("wallboxNote");
+
+  // No wallbox configured at all - hide the whole section rather than show
+  // an empty one.
+  if (!wb) {
+    title.hidden = true;
+    wrap.hidden = true;
+    note.hidden = true;
+    return;
+  }
+  title.hidden = false;
+  wrap.hidden = false;
+  note.hidden = false;
+  wrap.innerHTML = "";
+
+  const tile = (label, value, sub, subClass, color) => {
+    const el = document.createElement("div");
+    el.className = "tile";
+    el.innerHTML = `
+      <div class="label"><span class="dot" style="background:${cssVar(color || "--series-wallbox")}"></span>${label}</div>
+      <div class="value">${value}</div>
+      ${sub ? `<div class="${subClass || "sub"}">${sub}</div>` : ""}
+    `;
+    wrap.appendChild(el);
+  };
+
+  if (!wb.online) {
+    tile("Wallbox", "Offline", wb.error || "No answer on Modbus TCP", "sub warning", "--status-error");
+    note.textContent =
+      "The wallbox allows only two Modbus sessions and one is normally taken by the SEMS cloud - " +
+      "an offline reading here often just means both slots were busy.";
+    return;
+  }
+
+  // Charging is the one state worth colouring; everything else stays neutral
+  // so a glance at the panel shows whether power is actually flowing.
+  const statusColor = wb.charging ? "--success" : "--series-wallbox";
+  const plugged = wb.vehicle_connected === null ? "" :
+    wb.vehicle_connected ? "Vehicle connected" : "Nothing plugged in";
+  tile("Status", wb.status_text || "-",
+       wb.status_code === null ? plugged : `${plugged} · code ${wb.status_code}`,
+       "sub", statusColor);
+
+  const amps = wb.currents_a ? wb.currents_a.map((a) => `${fmt(a, 1)} A`).join(" · ") : "";
+  tile("Charging Power", wb.power_kw === null ? "-" : `${fmt(wb.power_kw, 1)} kW`, amps);
+
+  const volts = wb.voltages_v ? wb.voltages_v.map((v) => `${fmt(v, 1)} V`).join(" · ") : "-";
+  tile("Grid Voltage", volts, "L1 · L2 · L3");
+
+  tile("Total Energy", wb.total_energy_kwh === null ? "-" : `${fmt(wb.total_energy_kwh, 1)} kWh`);
+
+  tile("Charge Mode", wb.charge_mode || "-",
+       wb.max_power_kw === null ? "" : `Limit ${fmt(wb.max_power_kw, 1)} kW`);
+
+  tile("Hardware", [wb.power_spec, wb.phases].filter(Boolean).join(" · ") || "-",
+       wb.phase_switching === null ? "" :
+         wb.phase_switching ? "Phase switching enabled" : "Phase switching off");
+
+  tile("RFID Card", wb.rfid_card || "None");
+
+  // There is no documented alarm or error register in the community map, so
+  // rather than invent one, the registers that answer but have no known
+  // meaning are shown raw. Watching these change while a car charges is how
+  // the alarm register would actually be found.
+  const diag = wb.diagnostics || {};
+  const keys = Object.keys(diag);
+  if (keys.length) {
+    tile("Undocumented Registers",
+         `${keys.length} read`,
+         keys.map((k) => `${k}=${diag[k]}`).join("  "),
+         "sub mono");
+  }
+
+  note.textContent =
+    "Read-only. Register map is community-derived (evcc) and not confirmed by GoodWe - " +
+    "no alarm register is documented, so unknown registers are shown raw above.";
+}
+
 // Status codes that mean the surplus is actively being used (shown with the
 // "good"/green accent).
 const GOOD_STATUSES = new Set(["increasing", "max", "balanced"]);
@@ -126,6 +211,7 @@ async function fetchLive() {
     const latest = await res.json();
     renderTiles("tiles", TILE_DEFS, latest);
     renderTiles("tilesAsko", ASKO_TILE_DEFS, latest);
+    renderWallbox(latest.wallbox);
     renderStatusBanner(latest);
     document.getElementById("statusLine").textContent =
       latest.battery_charging === undefined ? "" : "Live data";

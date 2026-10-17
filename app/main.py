@@ -14,6 +14,7 @@ from .config import settings
 from .controller import SurplusController
 from .database import HistoryStore
 from .goodwe_client import GoodWeModbusReader
+from .wallbox_client import GoodWeWallboxReader
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -47,7 +48,14 @@ async def lifespan(app: FastAPI):
         settings.askoheat_slave_id,
         settings.askoheat_delay_s,
     )
-    controller = SurplusController(settings, reader, askoheat, store)
+    wallbox = (
+        GoodWeWallboxReader(
+            settings.wallbox_host, settings.wallbox_port, settings.wallbox_slave_id
+        )
+        if settings.wallbox_host
+        else None
+    )
+    controller = SurplusController(settings, reader, askoheat, store, wallbox)
 
     worker_thread = threading.Thread(target=controller.run_forever, daemon=True)
     worker_thread.start()

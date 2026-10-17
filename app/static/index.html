@@ -23,6 +23,7 @@
     --series-cons:            #eb6834; /* orange, slot 2 */
     --series-batt-charge:     #1baf7a; /* aqua, slot 3 */
     --series-soc:             #0f8a93; /* teal, battery charge level */
+    --series-wallbox:         #7a3fb5; /* purple, wallbox */
     --series-batt-discharge:  #eda100; /* yellow, slot 4 */
     --series-grid:            #e87ba4; /* magenta, slot 5 */
     --series-temp:            #008300; /* green, slot 6 */
@@ -48,6 +49,7 @@
       --series-cons:            #d95926;
       --series-batt-charge:     #199e70;
       --series-soc:             #2fb3bd;
+      --series-wallbox:         #b07de0;
       --series-batt-discharge:  #c98500;
       --series-grid:            #d55181;
       --series-temp:            #008300;
@@ -73,6 +75,7 @@
     --series-cons:            #d95926;
     --series-batt-charge:     #199e70;
     --series-soc:             #2fb3bd;
+    --series-wallbox:         #b07de0;
     --series-batt-discharge:  #c98500;
     --series-grid:            #d55181;
     --series-temp:            #008300;
@@ -212,6 +215,23 @@
     font-weight: 600;
     margin: 0 0 4px;
   }
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 4px 0 8px;
+    color: var(--text-secondary);
+  }
+  .wallbox-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: -12px 0 20px;
+  }
+  .tile .sub.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    word-break: break-all;
+  }
   .legend {
     display: flex;
     gap: 14px;
@@ -261,6 +281,10 @@
 
   <section class="tiles" id="tiles"></section>
   <section class="tiles" id="tilesAsko"></section>
+
+  <h2 class="section-title" id="wallboxTitle">Wallbox</h2>
+  <section class="tiles" id="tilesWallbox"></section>
+  <p class="wallbox-note" id="wallboxNote"></p>
 
   <div class="range-row" id="rangeRow">
     <button data-hours="1">1h</button>
