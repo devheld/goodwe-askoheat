@@ -95,6 +95,8 @@
     margin: 0 auto;
     padding: 24px 16px 48px;
   }
+  .crumbs { font-size: 13px; margin-bottom: 12px; }
+  .crumbs a { color: var(--text-secondary); }
   h1 {
     font-size: 20px;
     font-weight: 600;
@@ -271,6 +273,7 @@
 </head>
 <body>
 <main>
+  <nav class="crumbs"><a href="/energy">Energy analysis &rarr;</a></nav>
   <h1>AskoHeat Manager</h1>
   <p class="subtitle" id="statusLine">Loading data...</p>
 
@@ -328,6 +331,6 @@
 
   <p class="footer-note">As of: <span id="lastUpdate">-</span> · updates every <span id="updateInterval">-</span>s</p>
 </main>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

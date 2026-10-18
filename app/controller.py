@@ -8,7 +8,7 @@ from .askoheat_client import AskoHeatController
 from .config import Settings
 from .database import HistoryStore, Reading
 from .goodwe_client import GoodWeModbusReader
-from .wallbox_client import GoodWeWallboxReader
+from .wallbox_client import STATUS_TEXT, GoodWeWallboxReader
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,9 @@ class SurplusController:
         # never consulted for a heating decision. See GoodWeWallboxReader on
         # why its connection is held open rather than reopened per tick.
         self._wallbox = wallbox
+        # Last recorded charger state, so the event log keeps transitions
+        # instead of one row per poll. None until the first reading.
+        self._wallbox_state: dict | None = None
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -408,8 +411,14 @@ class SurplusController:
             askoheat_temp_c=askoheat_temp_c,
             status=status,
             status_text=status_text,
+            wallbox_power_kw=(wallbox or {}).get("power_kw"),
+            wallbox_status_code=(wallbox or {}).get("status_code"),
+            wallbox_charging=(wallbox or {}).get("charging"),
+            wallbox_energy_kwh=(wallbox or {}).get("total_energy_kwh"),
         )
         self._store.insert(reading)
+        if wallbox is not None:
+            self._record_wallbox_event(timestamp, wallbox)
 
         with self._lock:
             self._latest = {
@@ -442,4 +451,64 @@ class SurplusController:
             f"{askoheat_temp_c:.1f}" if askoheat_temp_c is not None else "?",
             status,
             status_text,
+        )
+
+    def _record_wallbox_event(self, timestamp: str, wallbox: dict) -> None:
+        """Append to the charger's event log, but only when something changed.
+
+        The per-poll power already lives in the readings table; what that
+        table cannot answer afterwards is when a car was plugged in, when a
+        charge actually started, or when the box went quiet - so one row is
+        written per transition, with the first tick after a restart recorded
+        as a startup snapshot rather than as a transition that may never
+        have happened.
+        """
+        current = {
+            "online": wallbox["online"],
+            "status_code": wallbox["status_code"],
+            "charging": wallbox["charging"],
+            "charge_mode": wallbox["charge_mode"],
+        }
+        previous = self._wallbox_state
+        if previous == current:
+            return
+        self._wallbox_state = current
+
+        if previous is None:
+            event = "startup"
+            detail = "Service started, wallbox %s" % (
+                wallbox["status_text"] if current["online"] else "unreachable"
+            )
+        elif previous["online"] != current["online"]:
+            event = "connection"
+            detail = (
+                "Wallbox reachable again"
+                if current["online"]
+                else "Wallbox unreachable: %s" % (wallbox.get("error") or "no answer")
+            )
+        elif previous["charging"] != current["charging"]:
+            event = "charging"
+            detail = "Charging started" if current["charging"] else "Charging stopped"
+        elif previous["status_code"] != current["status_code"]:
+            event = "status"
+            detail = "%s -> %s" % (
+                STATUS_TEXT.get(previous["status_code"], previous["status_code"]),
+                wallbox["status_text"],
+            )
+        else:
+            event = "mode"
+            detail = "Charge mode %s -> %s" % (
+                previous["charge_mode"] or "?",
+                current["charge_mode"] or "?",
+            )
+
+        self._store.insert_wallbox_event(
+            timestamp=timestamp,
+            event=event,
+            detail=detail,
+            status_code=current["status_code"],
+            status_text=wallbox["status_text"],
+            charge_mode=current["charge_mode"],
+            power_kw=wallbox["power_kw"],
+            energy_kwh=wallbox["total_energy_kwh"],
         )

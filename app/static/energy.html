@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Energy - AskoHeat Manager</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --surface-page:   #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --status-error:   #d03b3b;
+
+    /* Energy entities. One color per entity, used the same way in every
+       chart on this page. The three that share the consumption stack
+       (house / askoheat / wallbox) were picked by running the palette
+       validator: orange -> violet -> aqua clears the colour-blindness and
+       contrast gates in both modes, while the obvious violet+purple pair
+       did not (protan delta-E 3.9, invisible to a red-blind reader). */
+    --e-solar:   #2a78d6;
+    --e-house:   #eb6834;
+    --e-asko:    #6250d6;
+    --e-wallbox: #1baf7a;
+    --e-import:  #e34948;
+    --e-export:  #2a78d6;
+    --e-battery: #eda100;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --surface-page:   #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --status-error:   #d03b3b;
+
+      --e-solar:   #3987e5;
+      --e-house:   #d95926;
+      --e-asko:    #9085e9;
+      --e-wallbox: #199e70;
+      --e-import:  #e66767;
+      --e-export:  #3987e5;
+      --e-battery: #c98500;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --surface-page:   #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --status-error:   #d03b3b;
+
+    --e-solar:   #3987e5;
+    --e-house:   #d95926;
+    --e-asko:    #9085e9;
+    --e-wallbox: #199e70;
+    --e-import:  #e66767;
+    --e-export:  #3987e5;
+    --e-battery: #c98500;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--surface-page);
+    color: var(--text-primary);
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+  a { color: var(--text-secondary); }
+  .crumbs { font-size: 13px; margin-bottom: 12px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; }
+
+  .range-row { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .range-row button {
+    font: inherit;
+    font-size: 13px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .range-row button[aria-pressed="true"] {
+    color: var(--text-primary);
+    border-color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .tile {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+  .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .tile .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+
+  .chart-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .chart-card h2 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+  .chart-note { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; }
+  .legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .legend span.item { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .legend span.item[aria-pressed="false"] { opacity: 0.35; }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 2px; }
+  svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+  .empty-state { color: var(--text-muted); font-size: 13px; padding: 24px 0; text-align: center; }
+
+  table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.data th, table.data td {
+    text-align: right;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+  table.data th { color: var(--text-secondary); font-weight: 600; }
+  details.table-view { margin-top: 10px; }
+  details.table-view summary {
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .events { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  .events li {
+    display: flex;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .events .when { color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .events .kind {
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    min-width: 72px;
+  }
+
+  #tooltip {
+    position: fixed;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 80ms linear;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--text-primary);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    z-index: 10;
+    max-width: 260px;
+  }
+  #tooltip .tt-title { font-weight: 600; margin-bottom: 4px; }
+  #tooltip .tt-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  #tooltip .tt-row .swatch { width: 8px; height: 8px; border-radius: 2px; }
+  #tooltip .tt-row .tt-val { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .footer-note { color: var(--text-muted); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="crumbs"><a href="/">&larr; Live dashboard</a></nav>
+  <h1>Energy</h1>
+  <p class="subtitle" id="subtitle">Loading...</p>
+
+  <div class="range-row" id="periodRow">
+    <button data-period="today" aria-pressed="true">Today</button>
+    <button data-period="10d" aria-pressed="false">Last 10 days</button>
+    <button data-period="month" aria-pressed="false">This month</button>
+    <button data-period="year" aria-pressed="false">This year</button>
+    <button data-period="all" aria-pressed="false">All time</button>
+  </div>
+
+  <section class="tiles" id="kpis"></section>
+
+  <div class="chart-card">
+    <h2>Consumption by consumer</h2>
+    <p class="chart-note" id="stackNote">
+      Stacked kWh per bucket, with solar production as a line on the same scale.
+    </p>
+    <div class="legend" id="legendStack"></div>
+    <div id="chartStack"></div>
+    <details class="table-view"><summary>Show as table</summary><div id="tableStack"></div></details>
+  </div>
+
+  <div class="chart-card">
+    <h2>Grid balance</h2>
+    <p class="chart-note">Above the line is fed in, below it is drawn from the grid.</p>
+    <div class="legend" id="legendGrid"></div>
+    <div id="chartGrid"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>Where the energy went</h2>
+    <p class="chart-note" id="donutNote">Share of total consumption in this period.</p>
+    <div class="legend" id="legendDonut"></div>
+    <div id="chartDonut"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>Wallbox charging sessions</h2>
+    <p class="chart-note" id="sessionNote">Last 30 days, rebuilt from the recorded samples.</p>
+    <div id="chartSessions"></div>
+    <details class="table-view" open><summary>Session list</summary><div id="tableSessions"></div></details>
+  </div>
+
+  <div class="chart-card">
+    <h2>Wallbox events</h2>
+    <p class="chart-note">One entry per state change, not per poll.</p>
+    <ul class="events" id="eventList"></ul>
+  </div>
+
+  <p class="footer-note" id="footerNote"></p>
+</main>
+<div id="tooltip" role="tooltip" aria-hidden="true"></div>
+<script src="/static/vendor/d3.v7.min.js"></script>
+<script src="/static/energy.js?v=1"></script>
+</body>
+</html>

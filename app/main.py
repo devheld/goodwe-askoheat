@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -12,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from .askoheat_client import AskoHeatController
 from .config import settings
 from .controller import SurplusController
-from .database import HistoryStore
+from .database import PERIODS, HistoryStore
 from .goodwe_client import GoodWeModbusReader
 from .wallbox_client import GoodWeWallboxReader
 
@@ -86,3 +87,37 @@ async def live() -> dict:
 async def history(hours: int = Query(24, ge=1, le=24 * 30)) -> dict:
     assert store is not None
     return {"hours": hours, "points": store.history(hours)}
+
+
+@app.get("/energy")
+async def energy_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "energy.html")
+
+
+@app.get("/api/energy")
+async def energy(period: str = Query("today")) -> dict:
+    assert store is not None
+    if period not in PERIODS:
+        raise HTTPException(status_code=400, detail=f"Unknown period: {period}")
+    return store.energy_buckets(period)
+
+
+@app.get("/api/wallbox/sessions")
+async def wallbox_sessions(days: int = Query(30, ge=1, le=366)) -> dict:
+    assert store is not None
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    sessions = store.wallbox_sessions(since)
+    return {
+        "days": days,
+        "sessions": sessions,
+        "total_kwh": round(sum(s["energy_kwh"] for s in sessions), 3),
+    }
+
+
+@app.get("/api/wallbox/events")
+async def wallbox_events(
+    days: int = Query(30, ge=1, le=366), limit: int = Query(200, ge=1, le=1000)
+) -> dict:
+    assert store is not None
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return {"days": days, "events": store.wallbox_events(since, limit)}
