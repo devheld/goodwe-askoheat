@@ -27,8 +27,8 @@
     --e-house:   #eb6834;
     --e-asko:    #6250d6;
     --e-wallbox: #1baf7a;
-    --e-import:  #e34948;
-    --e-export:  #2a78d6;
+    --e-import:  #e87ba4;
+    --e-export:  #008300;
     --e-battery: #eda100;
   }
   @media (prefers-color-scheme: dark) {
@@ -48,8 +48,8 @@
       --e-house:   #d95926;
       --e-asko:    #9085e9;
       --e-wallbox: #199e70;
-      --e-import:  #e66767;
-      --e-export:  #3987e5;
+      --e-import:  #d55181;
+      --e-export:  #008300;
       --e-battery: #c98500;
     }
   }
@@ -69,8 +69,8 @@
     --e-house:   #d95926;
     --e-asko:    #9085e9;
     --e-wallbox: #199e70;
-    --e-import:  #e66767;
-    --e-export:  #3987e5;
+    --e-import:  #d55181;
+    --e-export:  #008300;
     --e-battery: #c98500;
   }
 
@@ -231,7 +231,7 @@
 
   <div class="chart-card">
     <h2>Grid balance</h2>
-    <p class="chart-note">Above the line is fed in, below it is drawn from the grid.</p>
+    <p class="chart-note">Drawn from the grid and fed in, side by side - both counted upwards.</p>
     <div class="legend" id="legendGrid"></div>
     <div id="chartGrid"></div>
   </div>
@@ -260,6 +260,6 @@
 </main>
 <div id="tooltip" role="tooltip" aria-hidden="true"></div>
 <script src="/static/vendor/d3.v7.min.js"></script>
-<script src="/static/energy.js?v=1"></script>
+<script src="/static/energy.js?v=2"></script>
 </body>
 </html>

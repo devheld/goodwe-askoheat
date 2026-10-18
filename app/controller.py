@@ -428,6 +428,13 @@ class SurplusController:
                 "battery_charge_kw": readings.battery_charge_kw,
                 "battery_discharge_kw": readings.battery_discharge_kw,
                 "grid_kw": readings.grid_kw,
+                # Same quantity, split by direction. The meter reports one
+                # signed value (positive = export on this inverter) and the
+                # database keeps it that way, but every reader downstream
+                # gets named, always-positive numbers - which direction a
+                # sign means is a per-vendor convention, a label is not.
+                "grid_import_kw": max(0.0, -readings.grid_kw),
+                "grid_export_kw": max(0.0, readings.grid_kw),
                 "battery_charging": readings.battery_charging,
                 "battery_soc_pct": readings.battery_soc_pct,
                 "step": self._current_step,

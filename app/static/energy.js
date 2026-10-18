@@ -178,8 +178,8 @@ function renderKpis(energy) {
   const tiles = [
     { label: "Consumption", value: `${fmt(t.consumption)} kWh`, sub: "Everything behind the meter", color: "--e-house" },
     { label: "Solar", value: `${fmt(t.pv)} kWh`, sub: "Produced on the roof", color: "--e-solar" },
-    { label: "From grid", value: `${fmt(t.grid_import)} kWh`, sub: "Bought", color: "--e-import" },
-    { label: "To grid", value: `${fmt(t.grid_export)} kWh`, sub: "Fed in", color: "--e-export" },
+    { label: "Grid import", value: `${fmt(t.grid_import)} kWh`, sub: "Bought", color: "--e-import" },
+    { label: "Grid feed-in", value: `${fmt(t.grid_export)} kWh`, sub: "Sold", color: "--e-export" },
     {
       label: "Self-sufficiency",
       value: m.autarky_pct === null ? "-" : `${fmt(m.autarky_pct, 0)} %`,
@@ -361,31 +361,41 @@ function renderGrid(energy) {
     .range([padL, width - padR])
     .padding(0.22);
 
-  const maxExport = d3.max(buckets, (d) => d.grid_export) || 0;
-  const maxImport = d3.max(buckets, (d) => d.grid_import) || 0;
-  const span = Math.max(maxExport, maxImport, 0.1) * 1.1;
-  const y = d3.scaleLinear().domain([-span, span]).range([height - padB, padT]);
+  // Both directions count upwards. A signed axis is compact, but it asks the
+  // reader to remember which sign means which direction - and that
+  // convention differs between inverter vendors, so the label does the work
+  // instead.
+  const peak = d3.max(buckets, (d) => Math.max(d.grid_import, d.grid_export)) || 0;
+  const y = d3
+    .scaleLinear()
+    .domain([0, Math.max(peak, 0.1) * 1.1])
+    .range([height - padB, padT]);
 
-  drawYGrid(svg, y, padL, width - padR, { decimals: span < 5 ? 1 : 0, zeroLine: true });
+  drawYGrid(svg, y, padL, width - padR, { decimals: peak < 5 ? 1 : 0 });
+
+  const DIRECTIONS = [
+    { key: "grid_import", color: "--e-import" },
+    { key: "grid_export", color: "--e-export" },
+  ];
+  const inner = d3
+    .scaleBand()
+    .domain(DIRECTIONS.map((d) => d.key))
+    .range([0, band.bandwidth()])
+    .padding(0.16);
 
   const zero = y(0);
   const g = svg.append("g");
   for (const d of buckets) {
-    if (d.grid_export > 0) {
-      const top = y(d.grid_export);
+    for (const dir of DIRECTIONS) {
+      const value = d[dir.key];
+      if (value <= 0) continue;
+      const top = y(value);
       g.append("path")
-        .attr("d", barPath(band(d.bucket), top, band.bandwidth(), zero - top, 4))
-        .attr("fill", cssVar("--e-export"));
-    }
-    if (d.grid_import > 0) {
-      // Mirrored downwards: same geometry, flipped, so the rounded end again
-      // sits at the data end and the square end at the baseline.
-      const bottom = y(-d.grid_import);
-      const h = bottom - zero;
-      g.append("path")
-        .attr("d", barPath(band(d.bucket), zero, band.bandwidth(), h, 4))
-        .attr("fill", cssVar("--e-import"))
-        .attr("transform", `rotate(180 ${band(d.bucket) + band.bandwidth() / 2} ${zero + h / 2})`);
+        .attr(
+          "d",
+          barPath(band(d.bucket) + inner(dir.key), top, inner.bandwidth(), zero - top, 4)
+        )
+        .attr("fill", cssVar(dir.color));
     }
   }
 
@@ -404,8 +414,8 @@ function renderGrid(energy) {
     .on("mousemove", (event, d) => {
       showTip(
         tipRows(bucketLabel(d.bucket, energy.grain, true), [
-          { color: "--e-export", label: "Fed in", value: `${fmt(d.grid_export, 2)} kWh` },
-          { color: "--e-import", label: "Drawn", value: `${fmt(d.grid_import, 2)} kWh` },
+          { color: "--e-import", label: "Grid import", value: `${fmt(d.grid_import, 2)} kWh` },
+          { color: "--e-export", label: "Grid feed-in", value: `${fmt(d.grid_export, 2)} kWh` },
         ]),
         event
       );
@@ -599,8 +609,8 @@ function renderEnergy() {
   document.getElementById("legendStack").appendChild(solar);
 
   renderLegend("legendGrid", [
-    { key: "grid_export", name: "Fed in", color: "--e-export" },
-    { key: "grid_import", name: "Drawn from grid", color: "--e-import" },
+    { key: "grid_import", name: "Grid import", color: "--e-import" },
+    { key: "grid_export", name: "Grid feed-in", color: "--e-export" },
   ]);
   renderLegend("legendDonut", CONSUMERS);
 

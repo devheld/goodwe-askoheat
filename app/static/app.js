@@ -4,7 +4,8 @@ const TILE_DEFS = [
   { key: "battery_charge_kw", label: "Battery (Charging)", unit: "kW", color: "--series-batt-charge" },
   { key: "battery_discharge_kw", label: "Battery (Discharging)", unit: "kW", color: "--series-batt-discharge" },
   { key: "battery_soc_pct", label: "Battery Charge Level", unit: "%", color: "--series-soc" },
-  { key: "grid_kw", label: "Grid", unit: "kW", color: "--series-grid" },
+  { key: "grid_import_kw", label: "Grid Import", unit: "kW", color: "--series-grid" },
+  { key: "grid_export_kw", label: "Grid Feed-in", unit: "kW", color: "--series-grid-export" },
 ];
 
 const ASKO_TILE_DEFS = [
@@ -30,7 +31,13 @@ const POWER_SERIES_DEFS = [
   { key: "consumption_kw", name: "Consumption", color: "--series-cons" },
   { key: "battery_charge_kw", name: "Battery Charge", color: "--series-batt-charge" },
   { key: "battery_discharge_kw", name: "Battery Discharge", color: "--series-batt-discharge" },
-  { key: "grid_kw", name: "Grid", color: "--series-grid" },
+  // History rows keep the signed meter value, so the split happens here.
+  // Drawing it signed under a y axis fixed at 0 is what used to push the
+  // line out of the chart and across the card below it.
+  { key: "grid_import_kw", name: "Grid Import", color: "--series-grid",
+    value: (p) => Math.max(0, -p.grid_kw) },
+  { key: "grid_export_kw", name: "Grid Feed-in", color: "--series-grid-export",
+    value: (p) => Math.max(0, p.grid_kw) },
 ];
 
 let currentHours = 24;
@@ -53,13 +60,9 @@ function renderTiles(containerId, defs, latest) {
     let valueText;
     let sub = "";
     let subClass = "sub";
-    if (
-      def.key === "pv_kw" ||
-      def.key === "consumption_kw" ||
-      def.key === "battery_charge_kw" ||
-      def.key === "battery_discharge_kw" ||
-      def.key === "grid_kw"
-    ) {
+    // Keyed on the unit, not on a list of key names: the list silently
+    // dropped every power tile added after it was written.
+    if (def.unit === "kW") {
       valueText = `${fmt(latest[def.key])} ${def.unit}`;
     } else if (def.key === "battery_soc_pct") {
       valueText = latest.battery_soc_pct === null || latest.battery_soc_pct === undefined
@@ -350,9 +353,12 @@ function renderLineChart(container, series, opts) {
   const svgId = "chart-" + Math.random().toString(36).slice(2, 9);
   container.innerHTML = `
     <svg class="chart" id="${svgId}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      <defs><clipPath id="clip-${svgId}">
+        <rect x="${padL}" y="${padT - 2}" width="${innerW}" height="${innerH + 4}" />
+      </clipPath></defs>
       ${gridSvg}
       ${refLineSvg}
-      ${linesSvg}
+      <g clip-path="url(#clip-${svgId})">${linesSvg}</g>
       ${xAxisSvg}
       <g class="hover-layer" style="display:none">
         <line class="crosshair" y1="${padT}" y2="${padT + innerH}" stroke="${mutedColor}" stroke-width="1" stroke-dasharray="3,3" />
@@ -574,7 +580,10 @@ async function fetchHistory(hours) {
     const powerSeries = POWER_SERIES_DEFS.map((def) => ({
       name: def.name,
       color: def.color,
-      points: points.map((p) => ({ t: new Date(p.timestamp), v: p[def.key] })),
+      points: points.map((p) => ({
+        t: new Date(p.timestamp),
+        v: def.value ? def.value(p) : p[def.key],
+      })),
     }));
     renderLegend(document.getElementById("powerLegend"), POWER_SERIES_DEFS);
     renderLineChart(document.getElementById("powerChartWrap"), powerSeries, { hours, unit: "kW", yMin: 0 });
