@@ -80,7 +80,11 @@ async def index() -> FileResponse:
 async def live() -> dict:
     if controller is None or controller.latest is None:
         raise HTTPException(status_code=503, detail="No data received yet")
-    return {**controller.latest, "poll_interval_s": settings.poll_interval_s}
+    return {
+        **controller.latest,
+        "poll_interval_s": settings.poll_interval_s,
+        "tariff": _tariff(),
+    }
 
 
 @app.get("/api/history")
@@ -94,12 +98,39 @@ async def energy_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "energy.html")
 
 
+def _tariff() -> dict:
+    return {
+        "currency": "CHF",
+        "import_per_kwh": settings.price_import_chf_per_kwh,
+        "export_per_kwh": settings.price_export_chf_per_kwh,
+    }
+
+
 @app.get("/api/energy")
 async def energy(period: str = Query("today")) -> dict:
     assert store is not None
     if period not in PERIODS:
         raise HTTPException(status_code=400, detail=f"Unknown period: {period}")
-    return store.energy_buckets(period)
+    payload = store.energy_buckets(period)
+
+    # Money is derived here rather than in the store: prices are
+    # configuration, the store only knows what was measured.
+    totals = payload["totals"]
+    buy = settings.price_import_chf_per_kwh
+    sell = settings.price_export_chf_per_kwh
+    # Solar that never reached the grid is valued at the import price,
+    # because that is exactly the purchase it replaced.
+    self_consumed = max(0.0, totals["consumption"] - totals["grid_import"])
+    payload["tariff"] = _tariff()
+    payload["costs"] = {
+        "spent": round(totals["grid_import"] * buy, 2),
+        "earned": round(totals["grid_export"] * sell, 2),
+        "avoided": round(self_consumed * buy, 2),
+        "saved": round(self_consumed * buy + totals["grid_export"] * sell, 2),
+        "consumption_value": round(totals["consumption"] * buy, 2),
+        "self_consumed_kwh": round(self_consumed, 3),
+    }
+    return payload
 
 
 @app.get("/api/wallbox/sessions")

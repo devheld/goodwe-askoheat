@@ -102,7 +102,7 @@ function renderTiles(containerId, defs, latest) {
 // its values are a nested object with mixed shapes (triples of phase values,
 // a raw-register map, an offline state) that the generic tile renderer has
 // no reason to learn about.
-function renderWallbox(wb) {
+function renderWallbox(wb, tariff) {
   const title = document.getElementById("wallboxTitle");
   const wrap = document.getElementById("tilesWallbox");
   const note = document.getElementById("wallboxNote");
@@ -154,7 +154,17 @@ function renderWallbox(wb) {
   const volts = wb.voltages_v ? wb.voltages_v.map((v) => `${fmt(v, 1)} V`).join(" · ") : "-";
   tile("Grid Voltage", volts, "L1 · L2 · L3");
 
-  tile("Total Energy", wb.total_energy_kwh === null ? "-" : `${fmt(wb.total_energy_kwh, 1)} kWh`);
+  const energyCost =
+    tariff && wb.total_energy_kwh !== null
+      ? `${(wb.total_energy_kwh * tariff.import_per_kwh).toFixed(2)} ${tariff.currency} at ${
+          tariff.import_per_kwh
+        }/kWh`
+      : "";
+  tile(
+    "Total Energy",
+    wb.total_energy_kwh === null ? "-" : `${fmt(wb.total_energy_kwh, 1)} kWh`,
+    energyCost
+  );
 
   tile("Charge Mode", wb.charge_mode || "-",
        wb.max_power_kw === null ? "" : `Limit ${fmt(wb.max_power_kw, 1)} kW`);
@@ -214,7 +224,7 @@ async function fetchLive() {
     const latest = await res.json();
     renderTiles("tiles", TILE_DEFS, latest);
     renderTiles("tilesAsko", ASKO_TILE_DEFS, latest);
-    renderWallbox(latest.wallbox);
+    renderWallbox(latest.wallbox, latest.tariff);
     renderStatusBanner(latest);
     document.getElementById("statusLine").textContent =
       latest.battery_charging === undefined ? "" : "Live data";

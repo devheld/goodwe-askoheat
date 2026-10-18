@@ -22,6 +22,9 @@ const state = {
   hidden: new Set(),
   energy: null,
   sessions: null,
+  // Filled from /api/energy; the prices themselves live in the .env file,
+  // so nothing here hardcodes a tariff.
+  tariff: { currency: "CHF", import_per_kwh: 0, export_per_kwh: 0 },
 };
 
 const tooltip = document.getElementById("tooltip");
@@ -36,6 +39,29 @@ function fmt(value, digits = 1) {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+}
+
+function money(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${value.toLocaleString("en-GB", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} ${state.tariff.currency}`;
+}
+
+// Consumed kWh are priced at the import tariff even when they came off the
+// roof: that is the purchase they replaced. Exported kWh are priced at the
+// lower feed-in tariff.
+function rateFor(kind) {
+  return kind === "export" ? state.tariff.export_per_kwh : state.tariff.import_per_kwh;
+}
+
+function cost(kwh, kind = "import") {
+  return money((kwh || 0) * rateFor(kind));
+}
+
+function kwhWithCost(kwh, kind = "import", digits = 2) {
+  return `${fmt(kwh, digits)} kWh (${cost(kwh, kind)})`;
 }
 
 function showTip(html, event) {
@@ -175,23 +201,66 @@ function renderLegend(containerId, items, { toggle = false } = {}) {
 function renderKpis(energy) {
   const t = energy.totals;
   const m = energy.metrics;
+  const c = energy.costs;
   const tiles = [
-    { label: "Consumption", value: `${fmt(t.consumption)} kWh`, sub: "Everything behind the meter", color: "--e-house" },
-    { label: "Solar", value: `${fmt(t.pv)} kWh`, sub: "Produced on the roof", color: "--e-solar" },
-    { label: "Grid import", value: `${fmt(t.grid_import)} kWh`, sub: "Bought", color: "--e-import" },
-    { label: "Grid feed-in", value: `${fmt(t.grid_export)} kWh`, sub: "Sold", color: "--e-export" },
+    {
+      label: "Spent on electricity",
+      value: money(c.spent),
+      sub: `${fmt(t.grid_import)} kWh bought at ${money(state.tariff.import_per_kwh)}/kWh`,
+      color: "--e-import",
+    },
+    {
+      label: "Saved by solar",
+      value: money(c.saved),
+      sub: `${money(c.avoided)} not bought, ${money(c.earned)} fed in`,
+      color: "--e-export",
+    },
+    {
+      label: "Consumption",
+      value: `${fmt(t.consumption)} kWh`,
+      sub: `Worth ${money(c.consumption_value)} at the import price`,
+      color: "--e-house",
+    },
+    {
+      label: "Solar",
+      value: `${fmt(t.pv)} kWh`,
+      sub: `${fmt(c.self_consumed_kwh)} kWh used directly`,
+      color: "--e-solar",
+    },
+    {
+      label: "Grid import",
+      value: `${fmt(t.grid_import)} kWh`,
+      sub: `Bought for ${money(c.spent)}`,
+      color: "--e-import",
+    },
+    {
+      label: "Grid feed-in",
+      value: `${fmt(t.grid_export)} kWh`,
+      sub: `Earned ${money(c.earned)}`,
+      color: "--e-export",
+    },
     {
       label: "Self-sufficiency",
       value: m.autarky_pct === null ? "-" : `${fmt(m.autarky_pct, 0)} %`,
       sub: "Share not bought from the grid",
       color: "--e-solar",
     },
-    { label: "AskoHeat", value: `${fmt(t.asko)} kWh`, sub: "Immersion heater", color: "--e-asko" },
-    { label: "Wallbox", value: `${fmt(t.wallbox)} kWh`, sub: "Car charging", color: "--e-wallbox" },
+    {
+      label: "AskoHeat",
+      value: `${fmt(t.asko)} kWh`,
+      sub: `Immersion heater, ${cost(t.asko)}`,
+      color: "--e-asko",
+    },
+    {
+      label: "Wallbox",
+      value: `${fmt(t.wallbox)} kWh`,
+      sub: `Car charging, ${cost(t.wallbox)}`,
+      color: "--e-wallbox",
+    },
     {
       label: "Battery",
       value: `${fmt(t.battery_charge)} kWh`,
-      sub: `charged · ${fmt(t.battery_discharge)} kWh drawn`,
+      sub: `charged, ${fmt(t.battery_discharge)} kWh drawn`,
       color: "--e-battery",
     },
   ];
@@ -306,10 +375,10 @@ function renderStack(energy) {
       const rows = visible.map((c) => ({
         color: c.color,
         label: c.name,
-        value: `${fmt(d[c.key], 2)} kWh`,
+        value: kwhWithCost(d[c.key]),
       }));
       rows.push({ color: "--e-solar", label: "Solar", value: `${fmt(d.pv, 2)} kWh` });
-      rows.push({ label: "Total used", value: `${fmt(d.consumption, 2)} kWh` });
+      rows.push({ label: "Total used", value: kwhWithCost(d.consumption) });
       showTip(tipRows(bucketLabel(d.bucket, energy.grain, true), rows), event);
     })
     .on("mouseleave", hideTip);
@@ -326,6 +395,7 @@ function renderStackTable(energy) {
         <td>${fmt(d.asko, 2)}</td>
         <td>${fmt(d.wallbox, 2)}</td>
         <td>${fmt(d.consumption, 2)}</td>
+        <td>${cost(d.consumption)}</td>
         <td>${fmt(d.pv, 2)}</td>
       </tr>`
     )
@@ -334,7 +404,7 @@ function renderStackTable(energy) {
     <table class="data">
       <thead><tr>
         <th>Bucket</th><th>Household</th><th>AskoHeat</th><th>Wallbox</th>
-        <th>Total</th><th>Solar</th>
+        <th>Total</th><th>Value</th><th>Solar</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -414,8 +484,12 @@ function renderGrid(energy) {
     .on("mousemove", (event, d) => {
       showTip(
         tipRows(bucketLabel(d.bucket, energy.grain, true), [
-          { color: "--e-import", label: "Grid import", value: `${fmt(d.grid_import, 2)} kWh` },
-          { color: "--e-export", label: "Grid feed-in", value: `${fmt(d.grid_export, 2)} kWh` },
+          { color: "--e-import", label: "Grid import", value: kwhWithCost(d.grid_import) },
+          {
+            color: "--e-export",
+            label: "Grid feed-in",
+            value: kwhWithCost(d.grid_export, "export"),
+          },
         ]),
         event
       );
@@ -455,7 +529,7 @@ function renderDonut(energy) {
     .on("mousemove", (event, d) => {
       showTip(
         tipRows(d.data.name, [
-          { color: d.data.color, label: "Energy", value: `${fmt(d.data.value, 2)} kWh` },
+          { color: d.data.color, label: "Energy", value: kwhWithCost(d.data.value) },
           { label: "Share", value: `${fmt((100 * d.data.value) / total, 1)} %` },
         ]),
         event
@@ -539,7 +613,7 @@ function renderSessions(payload) {
       .on("mousemove", (event) =>
         showTip(
           tipRows(start.toLocaleString("en-GB"), [
-            { color: "--e-wallbox", label: "Charged", value: `${fmt(s.energy_kwh, 2)} kWh` },
+            { color: "--e-wallbox", label: "Charged", value: kwhWithCost(s.energy_kwh) },
             { label: "Duration", value: `${fmt(s.duration_min, 0)} min` },
             { label: "Peak", value: `${fmt(s.peak_kw, 1)} kW` },
           ]),
@@ -554,18 +628,19 @@ function renderSessions(payload) {
       .attr("y", y + rowH / 2 + 3)
       .attr("font-size", 11)
       .attr("fill", cssVar("--text-secondary"))
-      .text(`${fmt(s.energy_kwh, 1)} kWh`);
+      .text(`${fmt(s.energy_kwh, 1)} kWh (${cost(s.energy_kwh)})`);
   });
 
   table.innerHTML = `
     <table class="data">
-      <thead><tr><th>Start</th><th>Duration</th><th>Energy</th><th>Peak</th></tr></thead>
+      <thead><tr><th>Start</th><th>Duration</th><th>Energy</th><th>Cost</th><th>Peak</th></tr></thead>
       <tbody>${(payload.sessions || [])
         .map(
           (s) => `<tr>
             <td>${new Date(s.start).toLocaleString("en-GB")}</td>
             <td>${fmt(s.duration_min, 0)} min</td>
             <td>${fmt(s.energy_kwh, 2)} kWh</td>
+            <td>${cost(s.energy_kwh)}</td>
             <td>${fmt(s.peak_kw, 1)} kW</td>
           </tr>`
         )
@@ -574,7 +649,7 @@ function renderSessions(payload) {
   document.getElementById("sessionNote").textContent =
     `Last ${payload.days} days, rebuilt from the recorded samples - ${fmt(payload.total_kwh, 1)} kWh in ${
       payload.sessions.length
-    } session(s).`;
+    } session(s) worth ${cost(payload.total_kwh)}.`;
 }
 
 function renderEvents(payload) {
@@ -625,6 +700,7 @@ async function load() {
     const res = await fetch(`/api/energy?period=${state.period}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.energy = await res.json();
+    state.tariff = state.energy.tariff;
     subtitle.textContent = `Energy for ${PERIOD_LABELS[state.period]} - ${fmt(
       state.energy.totals.hours,
       1
@@ -648,7 +724,9 @@ async function load() {
 
   document.getElementById("footerNote").textContent =
     "kWh are integrated from one power sample per poll interval, not read from a meter. " +
-    "Gaps longer than 5 minutes count as 5 minutes, so a service outage cannot invent energy.";
+    "Gaps longer than 5 minutes count as 5 minutes, so a service outage cannot invent energy. " +
+    `Prices in brackets use ${money(state.tariff.import_per_kwh)}/kWh for consumption and ` +
+    `${money(state.tariff.export_per_kwh)}/kWh for feed-in, both set in the .env file.`;
 }
 
 document.getElementById("periodRow").addEventListener("click", (event) => {

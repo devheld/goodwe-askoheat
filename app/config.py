@@ -56,6 +56,11 @@ class Settings:
     # smaller margin would overshoot into grid import.
     surplus_step_margin_kw: float
 
+    # Tariff in CHF per kWh. Display only - the control loop never reads
+    # these, it regulates on power, not on price.
+    price_import_chf_per_kwh: float
+    price_export_chf_per_kwh: float
+
     db_path: Path
 
 
@@ -84,6 +89,12 @@ def load_settings() -> Settings:
             os.environ.get("BATTERY_KEEP_HEATING_SOC_PCT", "90")
         ),
         surplus_step_margin_kw=float(os.environ.get("SURPLUS_STEP_MARGIN_KW", "0.6")),
+        price_import_chf_per_kwh=float(
+            os.environ.get("PRICE_IMPORT_CHF_PER_KWH", "0.25")
+        ),
+        price_export_chf_per_kwh=float(
+            os.environ.get("PRICE_EXPORT_CHF_PER_KWH", "0.10")
+        ),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/askoheat.db"),
     )
 
