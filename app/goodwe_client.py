@@ -19,7 +19,15 @@ class Readings:
     battery_charge_kw: float
     battery_discharge_kw: float
     grid_kw: float
+    # True while the battery is NOT draining - idle counts as charging, see
+    # the note on the dead band in GoodWeModbusReader. The control loop wants
+    # exactly that question answered; anything that TELLS the user what the
+    # battery is doing has to use battery_state instead.
     battery_charging: bool
+    # "charging" | "idle" | "discharging" - the same measurement as the two
+    # power fields above, reduced to the three states worth putting in a
+    # sentence.
+    battery_state: str
     # BMS state of charge in percent, or None when the SOC read failed - the
     # controller treats an unknown SOC as "battery not full" (see
     # SurplusController._tick), which keeps the battery's priority.
@@ -65,6 +73,10 @@ class GoodWeModbusReader:
     (not a hard >= 0 cut): Ibattery1's resolution is 0.1A, which at this
     installation's ~765V battery bus is ~76W per step, so idle noise alone
     can read as a few hundredths of a kW of "discharge" with no tolerance.
+    That tolerance is right for the control decision and wrong for a status
+    text, which is why battery_state exists next to it: a battery sitting at
+    -4W is inside the dead band, so battery_charging is true, and the
+    dashboard used to report that as "charging".
 
     The registers are read in a single request covering 35103-35184
     (well within the ~125 register limit this device accepts per request).
@@ -207,6 +219,14 @@ class GoodWeModbusReader:
         battery_charge_kw = max(battery_signed_kw, 0.0)
         battery_discharge_kw = max(-battery_signed_kw, 0.0)
         battery_charging = battery_signed_kw >= -self._zero_threshold_kw
+        # The same dead band, but applied on both sides, so "doing nothing"
+        # is its own state instead of being folded into "charging".
+        if battery_signed_kw > self._zero_threshold_kw:
+            battery_state = "charging"
+        elif battery_signed_kw < -self._zero_threshold_kw:
+            battery_state = "discharging"
+        else:
+            battery_state = "idle"
 
         return Readings(
             pv_kw=pv_kw,
@@ -215,5 +235,6 @@ class GoodWeModbusReader:
             battery_discharge_kw=battery_discharge_kw,
             grid_kw=grid_kw,
             battery_charging=battery_charging,
+            battery_state=battery_state,
             battery_soc_pct=battery_soc_pct,
         )

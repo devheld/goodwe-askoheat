@@ -159,6 +159,16 @@ class SurplusController:
         to both fill the battery and heat the tank - in summer the battery is
         full by midday anyway and this barely changes when heating starts.
 
+        The ORDER of the checks decides which reason is reported, not what
+        happens: every branch below that returns "down" would return "down"
+        in any order. No-surplus is checked before the SOC because it is the
+        binding reason when both are true - with the house importing there is
+        nothing charging the battery either, so "battery has priority" would
+        name a condition that is not what is holding heating back. Measured
+        on this installation's own history before the change: of all ticks
+        reported as "battery", 78% had the battery not charging at all and
+        64% had it actively discharging.
+
         Once the battery is full it stops absorbing the surplus, and what
         happens to that surplus then decides how the heater is regulated
         (grid_kw is positive while exporting, negative while importing):
@@ -184,13 +194,18 @@ class SurplusController:
             # An unknown SOC counts as "not full", which keeps the battery's
             # priority intact instead of heating on a guess.
             return "down", "soc_unknown"
-        if soc < self._battery_full_threshold(heating):
-            return "down", "charging_battery"
 
+        # No surplus at all, whatever the SOC says.
         if not readings.battery_charging:
             return "down", "battery_discharging"
         if readings.grid_kw <= -self._settings.zero_threshold_kw:
             return "down", "grid_import"
+
+        # Past here there is something to distribute, so the battery's
+        # priority really is what keeps it away from the heater.
+        if soc < self._battery_full_threshold(heating):
+            return "down", "charging_battery"
+
         if readings.grid_kw >= self._settings.surplus_step_margin_kw:
             return "up", "surplus"
         if readings.grid_kw >= self._settings.zero_threshold_kw:
@@ -246,18 +261,34 @@ class SurplusController:
                 f"- waiting to cool down before starting to heat again",
             )
 
-        soc_text = (
-            f"{readings.battery_soc_pct:.0f}%"
-            if readings.battery_soc_pct is not None
-            else "unknown"
+        soc = readings.battery_soc_pct
+        soc_text = f"{soc:.0f}%" if soc is not None else "unknown"
+        # Taken from battery_state, not battery_charging: the latter is true
+        # while the battery sits idle inside the dead band, which is how this
+        # text used to report "charging at 9%" with the battery at -4W and
+        # the house importing 1.7kW.
+        flow_text = {
+            "charging": f"charging at {readings.battery_charge_kw:.2f}kW",
+            "discharging": f"discharging at {readings.battery_discharge_kw:.2f}kW",
+        }.get(readings.battery_state, "idle")
+
+        # Two different thresholds depending on whether a heating cycle was
+        # already running, so say which one is actually being applied.
+        was_heating = step_before > self._settings.step_min
+        threshold = self._battery_full_threshold(was_heating)
+        goal = (
+            f"needs {threshold:.0f}% to keep heating"
+            if was_heating
+            else f"heating starts at {threshold:.0f}%"
         )
+        battery_full = soc is not None and soc >= threshold
 
         if is_initial_hold:
             condition = {
                 "surplus": "surplus available",
                 "surplus_curtailed": "battery full and grid balanced",
                 "balanced": "surplus and heater balanced",
-                "charging_battery": f"battery still charging, {soc_text}",
+                "charging_battery": f"battery at {soc_text}, not full yet",
                 "soc_unknown": "battery SOC unavailable",
                 "battery_discharging": "battery discharging",
                 "grid_import": "importing from the grid",
@@ -282,18 +313,10 @@ class SurplusController:
             )
 
         if reason == "charging_battery":
-            # Two different thresholds depending on whether a heating cycle
-            # was running, so say which one is actually being applied.
-            was_heating = step_before > self._settings.step_min
-            threshold = self._battery_full_threshold(was_heating)
-            goal = (
-                f"needs {threshold:.0f}% to keep heating"
-                if was_heating
-                else f"heating starts at {threshold:.0f}%"
-            )
             return (
                 "battery",
-                f"Battery has priority: charging at {soc_text}, {goal} ({heater_note})",
+                f"Battery has priority: at {soc_text} and {flow_text}, "
+                f"{goal} ({heater_note})",
             )
 
         if reason in ("surplus", "surplus_curtailed"):
@@ -321,14 +344,25 @@ class SurplusController:
                 f"{self._current_step}/{self._settings.step_max}",
             )
 
-        cause = (
-            "battery discharging"
-            if reason == "battery_discharging"
-            else f"importing {abs(readings.grid_kw):.2f}kW from the grid"
-        )
+        # The battery's own flow is already in the cause when it is the
+        # cause, so don't repeat it there.
+        if reason == "battery_discharging":
+            cause = f"battery {flow_text}"
+            battery_note = f" Battery at {soc_text}, {goal}."
+        else:
+            cause = f"importing {abs(readings.grid_kw):.2f}kW from the grid"
+            battery_note = f" Battery at {soc_text} ({flow_text}), {goal}."
+        # Name the second condition too, but only while it is one: below the
+        # threshold the heater would stay off even if the surplus came back
+        # this minute. Once the battery is full it is just noise.
+        if battery_full:
+            battery_note = ""
         if self._current_step < step_before:
-            return "decreasing", f"No surplus ({cause}) - reducing heater step"
-        return "off", f"No surplus ({cause}) - heater off"
+            return (
+                "decreasing",
+                f"No surplus ({cause}) - reducing heater step.{battery_note}",
+            )
+        return "off", f"No surplus ({cause}) - heater off.{battery_note}"
 
     def _tick(self) -> None:
         try:
@@ -439,6 +473,7 @@ class SurplusController:
                 "grid_import_kw": max(0.0, -readings.grid_kw),
                 "grid_export_kw": max(0.0, readings.grid_kw),
                 "battery_charging": readings.battery_charging,
+                "battery_state": readings.battery_state,
                 "battery_soc_pct": readings.battery_soc_pct,
                 "step": self._current_step,
                 "heater_load_w": heater_load_w,

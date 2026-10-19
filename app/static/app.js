@@ -68,8 +68,14 @@ function renderTiles(containerId, defs, latest) {
       valueText = latest.battery_soc_pct === null || latest.battery_soc_pct === undefined
         ? "-"
         : `${fmt(latest.battery_soc_pct, 0)} ${def.unit}`;
-      if (latest.status === "battery") {
-        sub = `Charging to ${BATTERY_FULL_SOC_PCT}% before heating`;
+      // Don't claim a direction the measurement doesn't show: the
+      // battery can hold priority while sitting idle.
+      if (latest.battery_state === "charging") {
+        sub = `Charging towards ${BATTERY_FULL_SOC_PCT}%`;
+      } else if (latest.status === "battery") {
+        sub = `Has priority up to ${BATTERY_FULL_SOC_PCT}%`;
+      } else if (latest.battery_state === "discharging") {
+        sub = "Discharging";
       }
     } else if (def.key === "step") {
       valueText = `${latest.step}${def.unit}`;
