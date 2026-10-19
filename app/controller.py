@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 
 from .askoheat_client import AskoHeatController
@@ -64,6 +65,8 @@ class SurplusController:
         # Last recorded charger state, so the event log keeps transitions
         # instead of one row per poll. None until the first reading.
         self._wallbox_state: dict | None = None
+        self._wallbox_snapshot: dict | None = None
+        self._wallbox_polled_at: float | None = None
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -394,7 +397,7 @@ class SurplusController:
         # Dashboard-only, and deliberately after the heating decision above so
         # a slow or unreachable wallbox can never delay or change it. The
         # client swallows its own errors and reports them as a payload.
-        wallbox = self._wallbox.as_dict() if self._wallbox is not None else None
+        wallbox = self._poll_wallbox()
 
         timestamp = datetime.now(timezone.utc).isoformat()
         reading = Reading(
@@ -459,6 +462,26 @@ class SurplusController:
             status,
             status_text,
         )
+
+    def _poll_wallbox(self) -> dict | None:
+        """Read the charger on its own, slower clock.
+
+        The heating loop runs every minute, but the charger has only one
+        free Modbus slot and the owner's own app competes for it, so it is
+        read every wallbox_poll_interval_s instead. Between reads the last
+        snapshot is reused, which keeps the dashboard populated and gives
+        the energy integration a value to carry forward.
+        """
+        if self._wallbox is None:
+            return None
+        now = time.monotonic()
+        if (
+            self._wallbox_polled_at is None
+            or now - self._wallbox_polled_at >= self._settings.wallbox_poll_interval_s
+        ):
+            self._wallbox_polled_at = now
+            self._wallbox_snapshot = self._wallbox.as_dict()
+        return self._wallbox_snapshot
 
     def _record_wallbox_event(self, timestamp: str, wallbox: dict) -> None:
         """Append to the charger's event log, but only when something changed.

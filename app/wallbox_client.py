@@ -91,20 +91,21 @@ class WallboxReadings:
 class GoodWeWallboxReader:
     """Read-only Modbus TCP client for the GoodWe AC EV charger.
 
-    Two things about this device shape the design, and both are worth knowing
-    before changing anything here:
+    The wallbox accepts only TWO concurrent Modbus TCP sessions and the SEMS
+    cloud normally holds one, so the single remaining slot is shared with
+    whatever the owner is using - the SolarGo app, evcc, anything. This class
+    therefore connects, reads and disconnects per poll: it occupies the slot
+    for well under a second per interval instead of permanently.
 
-    1. The wallbox accepts only TWO concurrent Modbus TCP sessions, and the
-       SEMS cloud connection normally occupies one of them. That leaves a
-       single slot, so this class holds ONE connection open for the process
-       lifetime instead of connecting per poll.
-
-    2. Opening a Modbus connection reportedly resets register 10060 (the
-       charge start/stop command) to 0, which aborts an ongoing charge - see
-       evcc discussion #30669. Reconnecting on every poll would therefore
-       interrupt charging once a minute. Keeping the connection open avoids
-       that, and it is the reason _read() reconnects only after an actual
-       failure rather than opening and closing around each read.
+    It used to hold one connection open for the process lifetime, on the
+    argument that opening a connection resets register 10060 (charge
+    start/stop) and aborts an ongoing charge - see evcc discussion #30669.
+    Measurement on this installation retired that argument: the wallbox
+    resets the session by itself roughly every eleven minutes (TCP RST, 175
+    reconnects in 24 hours), so the connection was never persistent in
+    practice, and in exchange it blocked the owner's own app around the
+    clock. If a reconnect really does interrupt charging, the event log will
+    show it - a charge that stops within a poll interval of a reconnect.
 
     Nothing in this class writes. Control of the wallbox (charge command, max
     power, charge mode) is deliberately out of scope - the registers are
@@ -116,19 +117,11 @@ class GoodWeWallboxReader:
         self._host = host
         self._port = port
         self._slave_id = slave_id
-        self._client: ModbusTcpClient | None = None
-
-    def _ensure_client(self) -> ModbusTcpClient:
-        if self._client is None:
-            self._client = ModbusTcpClient(self._host, port=self._port, timeout=3)
-        if not self._client.connected:
-            self._client.connect()
-        return self._client
 
     def close(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+        """Nothing to release: every read closes its own connection. Kept so
+        the control loop can shut the reader down the same way as the
+        others."""
 
     def _read_block(self, client: ModbusTcpClient, start: int, count: int) -> list[int] | None:
         result = client.read_holding_registers(start, count=count, device_id=self._slave_id)
@@ -141,9 +134,9 @@ class GoodWeWallboxReader:
         """Reads a snapshot. Never raises - a failure comes back as
         WallboxReadings(online=False, error=...) so the caller can show it on
         the dashboard and carry on."""
+        client = ModbusTcpClient(self._host, port=self._port, timeout=3)
         try:
-            client = self._ensure_client()
-            if not client.connected:
+            if not client.connect():
                 return WallboxReadings(error="Not reachable")
 
             main = self._read_block(client, *_BLOCK_MAIN)
@@ -151,11 +144,12 @@ class GoodWeWallboxReader:
             diag = self._read_block(client, *_BLOCK_DIAG)
             rfid = self._read_block(client, *_BLOCK_RFID)
         except Exception as exc:
-            # Drop the client so the next poll reconnects - but only here,
-            # after a real failure, never as part of a normal read.
             logger.warning("Failed to read the wallbox: %s", exc)
-            self.close()
             return WallboxReadings(error=str(exc))
+        finally:
+            # Hand the Modbus slot back right away - the owner's own app may
+            # be waiting for it.
+            client.close()
 
         if main is None:
             return WallboxReadings(error="No answer from the wallbox")

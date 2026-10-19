@@ -31,6 +31,10 @@ class Settings:
     wallbox_host: str
     wallbox_port: int
     wallbox_slave_id: int
+    # Polled on its own, slower clock than the heating loop: the
+    # charger has one free Modbus slot and the owner's app needs it
+    # too, so this reader takes it briefly and rarely.
+    wallbox_poll_interval_s: int
 
     step_min: int
     step_max: int
@@ -79,6 +83,9 @@ def load_settings() -> Settings:
         wallbox_host=os.environ.get("WALLBOX_HOST", "192.168.1.172"),
         wallbox_port=int(os.environ.get("WALLBOX_PORT", "502")),
         wallbox_slave_id=int(os.environ.get("WALLBOX_SLAVE_ID", "247")),
+        wallbox_poll_interval_s=int(
+            os.environ.get("WALLBOX_POLL_INTERVAL_S", "300")
+        ),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),
