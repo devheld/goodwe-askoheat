@@ -134,8 +134,11 @@ class GoodWeWallboxReader:
         """Reads a snapshot. Never raises - a failure comes back as
         WallboxReadings(online=False, error=...) so the caller can show it on
         the dashboard and carry on."""
-        client = ModbusTcpClient(self._host, port=self._port, timeout=3)
+        # Built inside the try as well: constructing the client resolves the
+        # host, which can fail on its own once a name stops resolving.
+        client = None
         try:
+            client = ModbusTcpClient(self._host, port=self._port, timeout=3)
             if not client.connect():
                 return WallboxReadings(error="Not reachable")
 
@@ -149,7 +152,8 @@ class GoodWeWallboxReader:
         finally:
             # Hand the Modbus slot back right away - the owner's own app may
             # be waiting for it.
-            client.close()
+            if client is not None:
+                client.close()
 
         if main is None:
             return WallboxReadings(error="No answer from the wallbox")

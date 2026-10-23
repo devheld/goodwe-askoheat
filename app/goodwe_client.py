@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
-from typing import Callable, TypeVar
 
-from pymodbus.client import ModbusTcpClient
+from .modbus_link import ModbusLink
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -88,8 +84,9 @@ class GoodWeModbusReader:
     is requested, so device_id must be set to 247 - requesting with a
     different ID gets the response silently dropped by pymodbus.
 
-    Like AskoHeatController, every read goes through a reconnect-and-retry
-    wrapper since the TCP connection can be reset by the remote host.
+    Like AskoHeatController, the connection is a ModbusLink: it can be reset
+    by the remote host, and the inverter can also be off the network
+    entirely, which must not stop the service from starting.
     """
 
     BASE_REGISTER = 35103
@@ -97,9 +94,6 @@ class GoodWeModbusReader:
 
     # BMS information block ("SOC", first group battery capacity, in %).
     SOC_REGISTER = 37007
-
-    MAX_RETRIES = 2
-    RETRY_DELAY_S = 1
 
     def __init__(
         self,
@@ -112,56 +106,28 @@ class GoodWeModbusReader:
         self._port = port
         self._slave_id = slave_id
         self._zero_threshold_kw = zero_threshold_kw
-        self._client = ModbusTcpClient(host, port=port)
+        self._link = ModbusLink("GoodWe inverter", host, port)
 
     def connect(self) -> None:
-        if not self._client.connect():
-            raise ConnectionError(f"Could not reach GoodWe inverter at {self._host}:{self._port}")
+        self._link.connect()
 
     def close(self) -> None:
-        self._client.close()
+        self._link.close()
 
-    def _reconnect(self) -> None:
-        logger.warning("Reconnecting to GoodWe inverter at %s:%s", self._host, self._port)
-        try:
-            self._client.close()
-        except Exception:
-            logger.exception("Error while closing the old GoodWe connection (ignoring)")
-        if not self._client.connect():
-            raise ConnectionError(f"Could not reach GoodWe inverter at {self._host}:{self._port}")
-
-    def _with_retry(self, operation_name: str, func: Callable[[], T]) -> T:
-        last_exc: Exception = RuntimeError("unreachable")
-        for attempt in range(1, self.MAX_RETRIES + 2):
-            try:
-                return func()
-            except Exception as exc:
-                last_exc = exc
-                logger.warning(
-                    "GoodWe %s failed (attempt %s/%s): %s",
-                    operation_name,
-                    attempt,
-                    self.MAX_RETRIES + 1,
-                    exc,
-                )
-                if attempt <= self.MAX_RETRIES:
-                    time.sleep(self.RETRY_DELAY_S)
-                    try:
-                        self._reconnect()
-                    except Exception:
-                        logger.exception("Reconnect to GoodWe inverter failed")
-        raise last_exc
+    @property
+    def online(self) -> bool:
+        return self._link.online
 
     def read(self) -> Readings:
         def _do() -> list[int]:
-            result = self._client.read_holding_registers(
+            result = self._link.client.read_holding_registers(
                 self.BASE_REGISTER, count=self.READ_COUNT, device_id=self._slave_id
             )
             if result.isError():
                 raise IOError(f"GoodWe Modbus read returned an error: {result}")
             return result.registers
 
-        regs = self._with_retry("read", _do)
+        regs = self._link.call("read", _do)
         return self._decode(regs, self._read_soc_pct())
 
     def _read_soc_pct(self) -> float | None:
@@ -177,7 +143,7 @@ class GoodWeModbusReader:
         """
 
         def _do() -> int:
-            result = self._client.read_holding_registers(
+            result = self._link.client.read_holding_registers(
                 self.SOC_REGISTER, count=1, device_id=self._slave_id
             )
             if result.isError():
@@ -185,7 +151,7 @@ class GoodWeModbusReader:
             return result.registers[0]
 
         try:
-            soc = float(self._with_retry("SOC read", _do))
+            soc = float(self._link.call("SOC read", _do))
         except Exception:
             logger.exception("Failed to read the battery SOC")
             return None

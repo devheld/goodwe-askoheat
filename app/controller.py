@@ -85,18 +85,16 @@ class SurplusController:
         self._stop_event.set()
 
     def run_forever(self) -> None:
-        # The inverter IS waited for: without it a tick has nothing to read,
-        # nothing to decide on and nothing to record, so there is no point
-        # spinning the loop.
-        self._connect_with_retry("GoodWe inverter", self._reader.connect)
-        # The AskoHeat is NOT waited for. Every operation on it reconnects by
-        # itself (see AskoHeatController._with_retry) and _tick() already
-        # treats a heater that does not answer as a reportable condition
-        # rather than a fatal one. Blocking here instead meant that an
-        # immersion heater which was simply switched off took the whole
-        # dashboard down with it: the loop never reached its first tick,
-        # /api/live had nothing to return and answered 503 for an hour while
-        # the inverter was reachable the entire time.
+        # No device is waited for. Each one reconnects on its own (see
+        # app/modbus_link.py for the two permanent connections; the wallbox
+        # opens and closes a connection per poll), and _tick() treats a
+        # device that does not answer as a reportable condition rather than
+        # a fatal one. Blocking here instead meant an immersion heater that
+        # was simply switched off took the whole dashboard down with it: the
+        # loop never reached its first tick, /api/live had nothing to return
+        # and answered 503 for an hour while the inverter was reachable the
+        # entire time.
+        self._connect_once("GoodWe inverter", self._reader.connect)
         self._connect_once("AskoHeat", self._askoheat.connect)
         self._current_step = self._read_initial_step()
         self._pending_initial_hold = True
@@ -110,27 +108,12 @@ class SurplusController:
             if self._wallbox is not None:
                 self._wallbox.close()
 
-    def _connect_with_retry(self, device_name: str, connect_fn) -> None:
-        """connects to a device, retrying every poll_interval_s on failure
-        instead of letting the background thread die"""
-        while not self._stop_event.is_set():
-            try:
-                connect_fn()
-                return
-            except Exception:
-                logger.exception(
-                    "Failed to connect to %s, retrying in %ss",
-                    device_name,
-                    self._settings.poll_interval_s,
-                )
-                self._stop_event.wait(self._settings.poll_interval_s)
-
     def _connect_once(self, device_name: str, connect_fn) -> None:
         """Connect if the device answers, carry on without it if it does not.
 
-        For hardware whose absence degrades the service instead of stopping
-        it. The connection is re-established by the first operation that
-        succeeds after the device comes back.
+        Every device here degrades the service rather than stopping it, so
+        none of them is worth blocking on. The connection is re-established
+        by the first operation that succeeds after the device comes back.
         """
         try:
             connect_fn()
@@ -141,6 +124,75 @@ class SurplusController:
                 device_name,
                 exc_info=True,
             )
+
+    def _device_health(self, inverter_error: str | None = None) -> dict:
+        """Which devices answered last time they were asked.
+
+        Reported rather than probed: asking three devices whether they are
+        there would cost three connect timeouts per request.
+        """
+        wallbox = self._wallbox_snapshot or {}
+        health = {
+            "inverter": {
+                "online": inverter_error is None and self._reader.online,
+                "error": inverter_error,
+            },
+            "askoheat": {
+                "online": self._askoheat.online,
+                "error": None if self._askoheat.online else "Not reachable",
+            },
+        }
+        if self._wallbox is not None:
+            health["wallbox"] = {
+                "online": bool(wallbox.get("online")),
+                "error": wallbox.get("error"),
+            }
+        return health
+
+    def _publish_inverter_failure(self, error: str) -> None:
+        """Publish a snapshot without measurements, so the dashboard can say
+        what is missing.
+
+        Without this /api/live had nothing to return and answered 503, which
+        tells a reader that the service is broken rather than that one device
+        is unplugged. The measurements are left empty rather than carried
+        over from the last good tick: a PV figure from twenty minutes ago is
+        worse than none, because nothing on the page would say how old it is.
+        """
+        # The charger is on its own clock and its own connection, so it is
+        # still worth reading - a tick that gave up before reaching it was
+        # how an unreachable inverter also blanked the wallbox panel, for no
+        # reason other than the order of the lines in _tick().
+        wallbox = self._poll_wallbox()
+        empty = dict.fromkeys(
+            (
+                "pv_kw",
+                "consumption_kw",
+                "battery_charge_kw",
+                "battery_discharge_kw",
+                "grid_kw",
+                "grid_import_kw",
+                "grid_export_kw",
+                "battery_charging",
+                "battery_state",
+                "battery_soc_pct",
+                "heater_load_w",
+                "askoheat_temp_c",
+            )
+        )
+        with self._lock:
+            self._latest = {
+                **empty,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "step": self._current_step,
+                "status": "error",
+                "status_text": (
+                    f"Inverter unreachable ({error}) - no measurements until it "
+                    f"answers again, retrying every {self._settings.poll_interval_s}s"
+                ),
+                "wallbox": wallbox,
+                "devices": self._device_health(inverter_error=error),
+            }
 
     def _read_initial_step(self) -> int:
         """reads the AskoHeat's currently commanded step so a restart of this
@@ -395,8 +447,11 @@ class SurplusController:
     def _tick(self) -> None:
         try:
             readings = self._reader.read()
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to fetch GoodWe data")
+            # Nothing can be decided or recorded without the inverter, but
+            # the dashboard can still be told why.
+            self._publish_inverter_failure(str(exc))
             return
 
         # Read temperature up front (not just after set_step as before) since
@@ -509,6 +564,7 @@ class SurplusController:
                 "status": status,
                 "status_text": status_text,
                 "wallbox": wallbox,
+                "devices": self._device_health(),
             }
 
         logger.info(
@@ -543,7 +599,26 @@ class SurplusController:
             or now - self._wallbox_polled_at >= self._settings.wallbox_poll_interval_s
         ):
             self._wallbox_polled_at = now
-            self._wallbox_snapshot = self._wallbox.as_dict()
+            try:
+                self._wallbox_snapshot = self._wallbox.as_dict()
+            except Exception as exc:
+                # read() already turns a failure into an offline snapshot, so
+                # reaching here means something unforeseen - a hostname that
+                # stopped resolving, say. The charger is the one device on
+                # this installation that controls nothing, so it is never
+                # worth losing a tick over.
+                logger.exception("Unexpected failure while reading the wallbox")
+                self._wallbox_snapshot = {
+                    "online": False,
+                    "error": str(exc),
+                    "status_code": None,
+                    "status_text": None,
+                    "vehicle_connected": None,
+                    "charging": None,
+                    "power_kw": None,
+                    "total_energy_kwh": None,
+                    "charge_mode": None,
+                }
         return self._wallbox_snapshot
 
     def _record_wallbox_event(self, timestamp: str, wallbox: dict) -> None:

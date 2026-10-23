@@ -184,6 +184,46 @@ about one timer firing per minute or less). This is a browser behaviour, not
 a bug in the app - noted here as a known limitation; keep the dashboard tab
 focused for near-real-time updates.
 
+### 6. One missing device took the whole service down
+
+The immersion heater was switched off for an afternoon. The dashboard then
+answered `503 Service Unavailable` for an hour while the inverter was
+reachable the entire time, and no readings were recorded at all.
+
+`run_forever()` connected to each device before entering its loop, retrying
+forever on failure. A heater that was off the network therefore meant the
+loop never reached its first tick: nothing was read, nothing was stored, and
+`/api/live` had no reading to return. Nothing actually needed that wait -
+`_tick()` already handled a heater that stops answering mid-run, and the
+Modbus connections reconnect on their own.
+
+What the devices look like now:
+
+- **Nothing is waited for at startup.** Each device is tried once and the
+  service starts either way. A device that was not there is picked up by the
+  first operation that succeeds.
+- **Each connection repairs itself** (`app/modbus_link.py`). This was already
+  true for the two permanent connections, since the AskoHeat resets idle
+  sockets and the inverter's data logger reconnects to the cloud on its own
+  schedule; the charger has always opened and closed a connection per poll.
+- **A device known to be down costs one attempt, not three.** Attempts are
+  not free - each pays a full TCP connect timeout - and with three attempts
+  across two operations a missing heater spent about 25 seconds of every 60
+  second poll waiting on a socket that was never going to answer. Recovery is
+  no slower for it: the reconnect still happens on every call.
+- **A failed inverter read still publishes.** `/api/live` returns the device
+  health and a sentence naming what is missing instead of a 503, and the
+  dashboard prints which devices are not answering. The measurements are left
+  empty rather than carried over from the last good tick - a PV figure from
+  twenty minutes ago is worse than none, because nothing on the page would
+  say how old it is.
+- **The charger is read even when the inverter is not answering.** It is
+  separate hardware on a separate connection; it was only being skipped
+  because of the order of the lines in `_tick()`.
+
+The one thing still waited for is the inverter *as a data source*: without it
+a tick has nothing to measure, so it records nothing and says so.
+
 ## Setup
 
 ```

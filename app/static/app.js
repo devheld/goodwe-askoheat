@@ -223,6 +223,28 @@ function renderStatusBanner(latest) {
   }
 }
 
+// Every device here can be switched off, unplugged or simply not there
+// yet, and the service keeps running without it - so the page has to say
+// which ones are answering. The banner above carries one sentence and while
+// the inverter is gone that sentence is about the inverter, which left a
+// heater that was also off the network nowhere on the page.
+const DEVICE_NAMES = {
+  inverter: "Inverter",
+  askoheat: "AskoHeat",
+  wallbox: "Wallbox",
+};
+
+function deviceLine(latest) {
+  if (!latest.devices) {
+    return latest.battery_charging === undefined ? "" : "Live data";
+  }
+  const missing = Object.entries(latest.devices)
+    .filter(([, d]) => d && !d.online)
+    .map(([key]) => DEVICE_NAMES[key] || key);
+  if (!missing.length) return "Live data - all devices answering";
+  return `Live data - no answer from ${missing.join(", ")}`;
+}
+
 async function fetchLive() {
   try {
     const res = await fetch("/api/live");
@@ -232,8 +254,7 @@ async function fetchLive() {
     renderTiles("tilesAsko", ASKO_TILE_DEFS, latest);
     renderWallbox(latest.wallbox, latest.tariff);
     renderStatusBanner(latest);
-    document.getElementById("statusLine").textContent =
-      latest.battery_charging === undefined ? "" : "Live data";
+    document.getElementById("statusLine").textContent = deviceLine(latest);
     document.getElementById("lastUpdate").textContent = new Date(latest.timestamp).toLocaleString("en-GB");
     if (latest.poll_interval_s !== undefined) {
       document.getElementById("updateInterval").textContent = latest.poll_interval_s;
