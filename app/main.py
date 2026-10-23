@@ -33,7 +33,17 @@ worker_thread: threading.Thread | None = None
 async def lifespan(app: FastAPI):
     global controller, store, worker_thread
 
-    store = HistoryStore(settings.db_path)
+    store = HistoryStore(
+        settings.db_path,
+        # The loss buckets need the same limits the control loop runs on:
+        # what counts as a full battery, how hot the tank may be before a
+        # heating cycle may start, and where the heater runs out of steps.
+        battery_capacity_kwh=settings.battery_capacity_kwh,
+        battery_full_soc_pct=settings.battery_full_soc_pct,
+        heating_start_max_temp_c=settings.heating_start_max_temp_c,
+        step_max=settings.step_max,
+        zero_threshold_kw=settings.zero_threshold_kw,
+    )
     reader = GoodWeModbusReader(
         settings.goodwe_host,
         settings.goodwe_port,
@@ -130,6 +140,15 @@ async def energy(period: str = Query("today")) -> dict:
         "consumption_value": round(totals["consumption"] * buy, 2),
         "self_consumed_kwh": round(self_consumed, 3),
     }
+
+    # Losses are priced at the import tariff, not the feed-in tariff: with
+    # this installation exporting 0.6% of its production, a kWh that was lost
+    # or held back is a kWh that had to be bought instead, not one that failed
+    # to be sold.
+    losses = payload["losses"]
+    losses["real_chf"] = round(losses["real_kwh"] * buy, 2)
+    losses["curtailed_chf"] = round(losses["curtailed_kwh"] * buy, 2)
+    losses["headroom_chf"] = round(losses["curtailed_split"]["headroom"] * buy, 2)
     return payload
 
 

@@ -65,6 +65,13 @@ class Settings:
     price_import_chf_per_kwh: float
     price_export_chf_per_kwh: float
 
+    # Usable battery capacity in kWh, needed to tell a round-trip loss from
+    # energy that is simply still in the battery. Not readable over Modbus
+    # here, so it is configuration: derived for this installation from five
+    # grid charges that ran from a known SOC to a known SOC (25.6 / 27.1 /
+    # 27.5 / 28.3 / 31.8 kWh implied).
+    battery_capacity_kwh: float
+
     db_path: Path
 
 
@@ -102,6 +109,7 @@ def load_settings() -> Settings:
         price_export_chf_per_kwh=float(
             os.environ.get("PRICE_EXPORT_CHF_PER_KWH", "0.10")
         ),
+        battery_capacity_kwh=float(os.environ.get("BATTERY_CAPACITY_KWH", "27")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/askoheat.db"),
     )
 

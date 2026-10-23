@@ -30,6 +30,13 @@
     --e-import:  #e87ba4;
     --e-export:  #008300;
     --e-battery: #eda100;
+    /* Losses. Grey for the inverter's own draw because it is overhead rather
+       than an entity, plum for energy the plant held back - far enough from
+       both the violet AskoHeat (hue 248 vs 304) and the pink import to stay
+       apart for a red-blind reader. The battery's round-trip loss keeps the
+       battery colour: it is the same energy, one layer down. */
+    --e-loss:      #6f7682;
+    --e-curtailed: #9b4f96;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -51,6 +58,8 @@
       --e-import:  #d55181;
       --e-export:  #008300;
       --e-battery: #c98500;
+      --e-loss:      #8b929e;
+      --e-curtailed: #b06aab;
     }
   }
   :root[data-theme="dark"] {
@@ -72,6 +81,8 @@
     --e-import:  #d55181;
     --e-export:  #008300;
     --e-battery: #c98500;
+    --e-loss:      #8b929e;
+    --e-curtailed: #b06aab;
   }
 
   * { box-sizing: border-box; }
@@ -119,6 +130,22 @@
   .tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
   .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .tile .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  /* The loss tile carries its own breakdown, so it takes two columns: at
+     one column width every line wrapped between its label and its number.
+     Two tracks are always available - the grid only drops to one below a
+     320px viewport, which is narrower than any phone this runs on. */
+  .tile.wide { grid-column: span 2; }
+  .tile .sub .lines {
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px solid var(--border);
+  }
+  .tile .sub .line { display: flex; gap: 10px; margin-top: 3px; }
+  .tile .sub .line .n {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
   .tile .dot {
     display: inline-block;
     width: 8px; height: 8px;
@@ -244,6 +271,14 @@
   </div>
 
   <div class="chart-card">
+    <h2>Where the energy was lost</h2>
+    <p class="chart-note" id="lossNote"></p>
+    <div class="legend" id="legendLoss"></div>
+    <div id="chartLoss"></div>
+    <p class="chart-note" id="curtailNote"></p>
+  </div>
+
+  <div class="chart-card">
     <h2>Wallbox charging sessions</h2>
     <p class="chart-note" id="sessionNote">Last 30 days, rebuilt from the recorded samples.</p>
     <div id="chartSessions"></div>
@@ -260,6 +295,6 @@
 </main>
 <div id="tooltip" role="tooltip" aria-hidden="true"></div>
 <script src="/static/vendor/d3.v7.min.js"></script>
-<script src="/static/energy.js?v=3"></script>
+<script src="/static/energy.js?v=5"></script>
 </body>
 </html>

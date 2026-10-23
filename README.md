@@ -264,6 +264,53 @@ then deliberately treats the battery as not full and leaves the heater off,
 so this fails towards no heating rather than towards draining the battery -
 see [Control logic](#control-logic).
 
+## Losses on the energy page
+
+The energy page reports three loss buckets rather than one efficiency
+figure, because no two of them are measured the same way and only two of
+them are losses at all.
+
+**Inverter standby** is what went into the inverter and never came out of it:
+`pv + battery discharge + grid import - house load - battery charge - grid
+export`, summed per sample. It is worth keeping separate because it does not
+behave like a conversion loss - it measures ~0.1kW whether the roof is making
+1kW or 10kW, so it is the inverter's own draw, not a percentage of throughput.
+Over six weeks it was the largest bucket of the three.
+
+**Battery round trip** is `charged - drawn - still stored`, where the stored
+part is the SOC change times `BATTERY_CAPACITY_KWH`. Without that correction
+the figure is meaningless over short windows: a morning that put 18kWh in and
+took 4kWh out is a full battery, not a 78% loss. The page therefore suppresses
+the number entirely when more than a quarter of what went in is still in
+there, and says so instead of printing it. Measured over the full record:
+87% round trip.
+
+Only rows that carry an SOC are counted, so that the throughput and the SOC
+change describe the same span - the rows recorded before the SOC column
+existed otherwise contribute discharge with no charge to match, which puts
+the round trip at 93% for a battery that measures 87%.
+
+**Held back** is production the plant throttled away, and it is a lower bound,
+not a measurement: nothing here records what the roof could have produced. In
+a 15-minute window during which the battery was full and nothing went to the
+grid, the plant has demonstrated with its own best sample what it was capable
+of, and every sample below that was the inverter throttling production down to
+the house load. Anything it held back for a whole window is invisible to this.
+The window length is the whole argument - the same data gives 64kWh at 15
+minutes, 97 at 30, 407 at 60 and 883 unbounded - so the page uses the shortest
+window that still contains a usable reference and marks the result with a
+"greater than". It is listed next to the other two but is deliberately not part
+of the headline figure: it is energy that never existed, so adding it to energy
+that was measured going in would be double counting.
+
+The page also splits the held-back energy by who could have absorbed it. That
+split is the only number on the page that grades the control loop rather than
+the hardware, and it is the reason the loop is worth having: over the recorded
+period 54.6kWh was held back with the tank already too hot to start a heating
+cycle, 4.9kWh with the heater at its last step, 4.3kWh while the heater still
+had steps left - and 0.1kWh with a cold tank and the heater off, which is the
+only case the loop could have prevented and did not.
+
 ## Known limitations
 
 - Local Modbus/TCP is not enabled on a GoodWe data logger by default and

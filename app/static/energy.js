@@ -9,6 +9,15 @@ const CONSUMERS = [
   { key: "wallbox", name: "Wallbox", color: "--e-wallbox" },
 ];
 
+// The three loss buckets, in the order they are stacked and listed. Each is
+// measured a different way, which is why the tile names them separately
+// instead of printing one efficiency figure: see app/database.py.
+const LOSSES = [
+  { key: "loss_overhead", name: "Inverter", color: "--e-loss" },
+  { key: "loss_battery", name: "Battery", color: "--e-battery" },
+  { key: "loss_curtailed", name: "Held back", color: "--e-curtailed" },
+];
+
 const PERIOD_LABELS = {
   today: "today",
   "10d": "the last 10 days",
@@ -263,18 +272,157 @@ function renderKpis(energy) {
       sub: `charged, ${fmt(t.battery_discharge)} kWh drawn`,
       color: "--e-battery",
     },
+    {
+      label: "Losses",
+      value: `${fmt(energy.losses.real_kwh)} kWh`,
+      sub: lossBreakdown(energy.losses),
+      color: "--e-loss",
+      wide: true,
+    },
   ];
   const wrap = document.getElementById("kpis");
   wrap.innerHTML = "";
   for (const tile of tiles) {
     const el = document.createElement("div");
-    el.className = "tile";
+    el.className = tile.wide ? "tile wide" : "tile";
     el.innerHTML = `
       <div class="label"><span class="dot" style="background:${cssVar(tile.color)}"></span>${tile.label}</div>
       <div class="value">${tile.value}</div>
       <div class="sub">${tile.sub}</div>`;
     wrap.appendChild(el);
   }
+}
+
+// The tile's own breakdown. Each line says which bucket it is, because the
+// three are not comparable: the first two are energy that was measured going
+// in and never came out, the third is production that never happened and is
+// therefore NOT part of the headline figure above it.
+function lossBreakdown(L) {
+  const head =
+    L.real_pct_of_pv === null
+      ? ""
+      : `<div>${fmt(L.real_pct_of_pv)}% of solar &middot; ${money(L.real_chf)}</div>`;
+  const lines = [
+    `<div class="line"><span>Inverter standby</span>
+       <span class="n">${fmt(L.overhead_kwh)} kWh</span></div>`,
+  ];
+  if (L.battery_kwh === null) {
+    // Most of what went in is still in there - see BATTERY_LOSS_MAX_STORED_SHARE.
+    lines.push(`<div class="line"><span>Battery</span>
+       <span class="n">period too short</span></div>`);
+  } else {
+    lines.push(`<div class="line"><span>Battery round trip</span>
+       <span class="n">${fmt(L.battery_kwh)} kWh</span></div>`);
+  }
+  // Listed with the other two but deliberately outside the headline above:
+  // this is production that never happened, so adding it to energy that was
+  // measured going in and never coming out would be double counting.
+  lines.push(`<div class="line"><span>Held back by the plant</span>
+       <span class="n">&ge; ${fmt(L.curtailed_kwh)} kWh</span></div>`);
+  return head + `<div class="lines">${lines.join("")}</div>`;
+}
+
+// --- losses per bucket -------------------------------------------------------
+
+function renderLosses(energy) {
+  const container = document.getElementById("chartLoss");
+  const buckets = energy.buckets;
+  const L = energy.losses;
+  const note = document.getElementById("lossNote");
+  const rt =
+    L.battery_round_trip_pct === null
+      ? "the period is too short to separate a round-trip loss from energy still stored"
+      : `the battery returned ${fmt(L.battery_round_trip_pct)}% of what went into it`;
+  note.textContent =
+    `Stacked kWh per bucket. Inverter standby is the gap in the inverter's own ` +
+    `balance, ${rt}, and "held back" is production the plant throttled away - ` +
+    `a lower bound measured against its own best output in the same ` +
+    `${L.curtailment_window_min} minutes, so it is marked with a "greater than".`;
+
+  const total = L.real_kwh + L.curtailed_kwh;
+  if (!buckets.length || total <= 0) {
+    container.innerHTML = '<div class="empty-state">No losses measured in this period.</div>';
+    document.getElementById("curtailNote").textContent = "";
+    return;
+  }
+
+  const width = 960;
+  const height = 240;
+  const padL = 48, padR = 12, padT = 12, padB = 28;
+  const svg = newSvg(container, width, height);
+  const band = d3
+    .scaleBand()
+    .domain(buckets.map((d) => d.bucket))
+    .range([padL, width - padR])
+    .padding(0.22);
+  const stackMax = d3.max(buckets, (d) => d3.sum(LOSSES, (l) => d[l.key] || 0)) || 0;
+  const y = d3
+    .scaleLinear()
+    .domain([0, stackMax * 1.1 || 1])
+    .range([height - padB, padT]);
+  drawYGrid(svg, y, padL, width - padR, { decimals: y.domain()[1] < 5 ? 1 : 0 });
+
+  const GAP = 2;
+  const layer = svg.append("g");
+  for (const bucket of buckets) {
+    let acc = 0;
+    const segments = LOSSES.map((l) => {
+      const value = bucket[l.key] || 0;
+      const seg = { l, value, y0: acc, y1: acc + value };
+      acc += value;
+      return seg;
+    }).filter((s) => s.value > 0);
+    const top = segments[segments.length - 1];
+    for (const seg of segments) {
+      const yTop = y(seg.y1);
+      const h = Math.max(0, y(seg.y0) - yTop - (seg === top ? 0 : GAP));
+      layer
+        .append("path")
+        .attr(
+          "d",
+          seg === top
+            ? barPath(band(bucket.bucket), yTop, band.bandwidth(), h, 4)
+            : `M${band(bucket.bucket)},${yTop}h${band.bandwidth()}v${h}h${-band.bandwidth()}Z`
+        )
+        .attr("fill", cssVar(seg.l.color));
+    }
+  }
+  drawXLabels(svg, band, buckets, energy.grain, height - padB);
+
+  svg
+    .append("g")
+    .selectAll("rect")
+    .data(buckets)
+    .join("rect")
+    .attr("x", (d) => band(d.bucket))
+    .attr("y", padT)
+    .attr("width", band.bandwidth())
+    .attr("height", height - padB - padT)
+    .attr("fill", "transparent")
+    .on("mousemove", (event, d) => {
+      const rows = LOSSES.map((l) => ({
+        color: l.color,
+        label: l.name,
+        value: kwhWithCost(d[l.key] || 0),
+      }));
+      rows.push({ label: "Solar that bucket", value: `${fmt(d.pv, 2)} kWh` });
+      showTip(tipRows(bucketLabel(d.bucket, energy.grain, true), rows), event);
+    })
+    .on("mouseleave", hideTip);
+
+  // Who could have taken the energy the plant held back. This is the only
+  // number on the page that grades the control loop rather than the hardware:
+  // "nobody asked for it" is the heater sitting at step 0 with a cold tank,
+  // which is the one case the loop could have prevented and did not.
+  const s = L.curtailed_split;
+  const parts = [
+    `${fmt(s.tank_hot)} kWh with the tank already too hot to start heating`,
+    `${fmt(s.at_max)} kWh with the heater at its last step`,
+    `${fmt(s.headroom)} kWh while the heater still had steps left (${money(L.headroom_chf)})`,
+    `${fmt(s.missed)} kWh with a cold tank and the heater off`,
+  ];
+  document.getElementById("curtailNote").textContent =
+    `Of the ${fmt(L.curtailed_kwh)} kWh held back: ` + parts.join(", ") + ".";
 }
 
 // --- stacked consumption + solar line ----------------------------------------
@@ -689,9 +837,12 @@ function renderEnergy() {
   ]);
   renderLegend("legendDonut", CONSUMERS);
 
+  renderLegend("legendLoss", LOSSES);
+
   renderStack(state.energy);
   renderGrid(state.energy);
   renderDonut(state.energy);
+  renderLosses(state.energy);
 }
 
 async function load() {

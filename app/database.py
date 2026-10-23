@@ -11,6 +11,30 @@ from pathlib import Path
 # never measured.
 MAX_SAMPLE_SPAN_H = 5 / 60
 
+# Curtailment is not measured anywhere - nothing in this installation records
+# what the roof COULD have produced. It is bounded instead: inside a short
+# window in which the battery was full and nothing went to the grid, the plant
+# has demonstrated with its own best sample what it was capable of, and every
+# sample below that was the inverter throttling production down to the house
+# load. Anything the plant held back for the whole window is invisible to this,
+# so the result is a lower bound, never a measurement.
+#
+# The window length is the whole argument. Longer windows use a reference from
+# further away in time and grow the number fast (measured here: 64 kWh at 15
+# minutes, 97 at 30, 407 at 60, 883 unbounded), so the shortest window that
+# still contains a usable reference is the honest choice.
+CURTAILMENT_SLOTS_PER_DAY = 96  # 15 minutes
+CURTAILMENT_MIN_PV_KW = 0.1
+# "Nothing went to the grid" has to tolerate the meter's own noise around zero,
+# but stay well under the smallest real export this plant produces.
+CURTAILMENT_EXPORT_EPS_KW = 0.05
+
+# A battery figure is only worth showing when most of what went in has come
+# back out again. Over a few hours it has not: charging 18kWh and recovering
+# 4kWh is a full battery, not an 80% loss, and subtracting the stored part
+# leaves a difference far smaller than the error of the capacity estimate.
+BATTERY_LOSS_MAX_STORED_SHARE = 0.25
+
 # Aggregation periods offered by /api/energy. fmt is an SQLite strftime
 # pattern applied to the LOCAL timestamp, so buckets line up with the days
 # and months the user lives in rather than with UTC.
@@ -72,9 +96,25 @@ def period_start(period: str, now: datetime | None = None) -> datetime:
 class HistoryStore:
     """Stores readings in SQLite for the web interface's history view."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        battery_capacity_kwh: float = 27.0,
+        battery_full_soc_pct: float = 95.0,
+        heating_start_max_temp_c: float = 52.0,
+        step_max: int = 7,
+        zero_threshold_kw: float = 0.05,
+    ) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
+        # Measurement parameters, not preferences: the loss buckets cannot be
+        # computed without them. Prices stay out of here - those are applied
+        # one layer up, in the API.
+        self._battery_capacity_kwh = battery_capacity_kwh
+        self._battery_full_soc_pct = battery_full_soc_pct
+        self._heating_start_max_temp_c = heating_start_max_temp_c
+        self._step_max = step_max
+        self._zero_threshold_kw = zero_threshold_kw
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -273,6 +313,12 @@ class HistoryStore:
                 SUM(asko_kw * h)                                       AS asko,
                 SUM(wallbox_kw * h)                                    AS wallbox,
                 SUM(MAX(consumption_kw - asko_kw - wallbox_kw, 0) * h) AS other,
+                -- What went into the inverter and never came out of it as
+                -- load, storage or export. Clamped per sample because a
+                -- negative loss is arithmetic noise, not energy appearing.
+                SUM(MAX(pv_kw + battery_discharge_kw + MAX(-grid_kw, 0)
+                        - consumption_kw - battery_charge_kw - MAX(grid_kw, 0),
+                        0) * h)                                        AS loss_overhead,
                 SUM(h)                                                 AS hours,
                 COUNT(*)                                               AS samples
             FROM capped
@@ -297,12 +343,17 @@ class HistoryStore:
             "asko",
             "wallbox",
             "other",
+            "loss_overhead",
+            "loss_battery",
+            "loss_curtailed",
             "hours",
         )
+        losses = self._add_losses(spec["fmt"], since, rows)
         totals = {k: round(sum(r[k] or 0.0 for r in rows), 3) for k in keys}
         for row in rows:
             for k in keys:
                 row[k] = round(row[k] or 0.0, 4)
+        losses = self._summarise_losses(losses, totals)
 
         return {
             "period": period if period in PERIODS else "today",
@@ -312,6 +363,7 @@ class HistoryStore:
             "buckets": rows,
             "totals": totals,
             "metrics": self._metrics(totals),
+            "losses": losses,
         }
 
     @staticmethod
@@ -335,6 +387,198 @@ class HistoryStore:
             "self_consumption_pct": (
                 None if self_consumption is None else max(0.0, min(100.0, self_consumption))
             ),
+        }
+
+    def _add_losses(self, fmt: str, since: datetime, rows: list[dict]) -> dict:
+        """Fill loss_battery and loss_curtailed per bucket, return the extras.
+
+        The overhead bucket is already in the main query because it is a
+        per-sample quantity. These two are not: the battery needs the SOC at
+        each end of a bucket, and curtailment needs a reference drawn from a
+        whole window of samples.
+        """
+        by_bucket = {row["bucket"]: row for row in rows}
+        for row in rows:
+            row["loss_battery"] = 0.0
+            row["loss_curtailed"] = 0.0
+
+        params = {"since": since.isoformat(), "maxh": MAX_SAMPLE_SPAN_H, "fmt": fmt}
+
+        # --------------------------------------------------------- battery
+        # Restricted to rows that carry an SOC, so that the throughput and the
+        # SOC change describe the same span. Without that restriction the rows
+        # recorded before the SOC column existed contribute discharge with no
+        # charge to match, and the round trip comes out at 93% for a battery
+        # that measures 87%.
+        battery_sql = """
+            WITH spans AS (
+                SELECT strftime(:fmt, timestamp, 'localtime') AS bucket,
+                       timestamp, battery_charge_kw, battery_discharge_kw,
+                       battery_soc_pct,
+                       (julianday(timestamp)
+                         - julianday(LAG(timestamp) OVER (ORDER BY timestamp)))
+                         * 24.0 AS raw_h
+                FROM readings
+                WHERE timestamp >= :since
+            ),
+            valid AS (
+                -- The SOC filter sits here, AFTER the window above: a span is
+                -- the time since the previous sample, not since the previous
+                -- sample that happened to carry an SOC.
+                SELECT * FROM spans
+                WHERE battery_soc_pct IS NOT NULL AND battery_soc_pct > 0
+            ),
+            edged AS (
+                SELECT *,
+                    MIN(COALESCE(raw_h, 0.0), :maxh) AS h,
+                    FIRST_VALUE(battery_soc_pct) OVER win AS soc_first,
+                    LAST_VALUE(battery_soc_pct) OVER win AS soc_last
+                FROM valid
+                WINDOW win AS (
+                    PARTITION BY bucket ORDER BY timestamp
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                )
+            )
+            SELECT bucket,
+                   SUM(battery_charge_kw * h)    AS charged,
+                   SUM(battery_discharge_kw * h) AS drawn,
+                   MIN(soc_first)                AS soc_first,
+                   MIN(soc_last)                 AS soc_last
+            FROM edged
+            GROUP BY bucket
+            ORDER BY bucket
+        """
+        charged = drawn = 0.0
+        soc_first = soc_last = None
+        with self._connect() as conn:
+            for row in conn.execute(battery_sql, params):
+                stored = (
+                    (row["soc_last"] - row["soc_first"]) / 100.0
+                    * self._battery_capacity_kwh
+                )
+                target = by_bucket.get(row["bucket"])
+                if target is not None:
+                    # Clamped: within one bucket a single step of the integer
+                    # SOC reading is worth ~0.27kWh, which can swamp a small
+                    # bucket's real loss and push it negative.
+                    target["loss_battery"] = max(
+                        (row["charged"] or 0.0) - (row["drawn"] or 0.0) - stored, 0.0
+                    )
+                charged += row["charged"] or 0.0
+                drawn += row["drawn"] or 0.0
+                if soc_first is None:
+                    soc_first = row["soc_first"]
+                soc_last = row["soc_last"]
+
+        # ----------------------------------------------------- curtailment
+        curtail_sql = """
+            WITH spans AS (
+                SELECT strftime(:fmt, timestamp, 'localtime') AS bucket,
+                       CAST(julianday(timestamp) * :slots AS INTEGER) AS slot,
+                       pv_kw, step, askoheat_temp_c, grid_kw,
+                       battery_discharge_kw, battery_soc_pct,
+                       (julianday(timestamp)
+                         - julianday(LAG(timestamp) OVER (ORDER BY timestamp)))
+                         * 24.0 AS raw_h
+                FROM readings
+                WHERE timestamp >= :since
+            ),
+            throttled AS (
+                -- Everything below the window above, so that one isolated
+                -- throttled sample weighs its own 70 seconds and not the
+                -- whole gap back to the last time the battery was full.
+                SELECT *, MIN(COALESCE(raw_h, 0.0), :maxh) AS h
+                FROM spans
+                WHERE pv_kw > :min_pv
+                  AND grid_kw < :export_eps
+                  AND battery_discharge_kw < :zero
+                  AND battery_soc_pct >= :full
+            ),
+            reference AS (
+                SELECT slot, MAX(pv_kw) AS cap FROM throttled GROUP BY slot
+            )
+            SELECT t.bucket,
+                   SUM((r.cap - t.pv_kw) * t.h) AS curtailed,
+                   -- Who could have taken it. The tank already being hot is
+                   -- the only one of these the control loop cannot help.
+                   SUM(CASE WHEN t.askoheat_temp_c > :hot
+                            THEN (r.cap - t.pv_kw) * t.h ELSE 0 END) AS tank_hot,
+                   SUM(CASE WHEN t.askoheat_temp_c <= :hot AND t.step >= :step_max
+                            THEN (r.cap - t.pv_kw) * t.h ELSE 0 END) AS at_max,
+                   SUM(CASE WHEN t.askoheat_temp_c <= :hot
+                             AND t.step > 0 AND t.step < :step_max
+                            THEN (r.cap - t.pv_kw) * t.h ELSE 0 END) AS headroom,
+                   SUM(CASE WHEN t.askoheat_temp_c <= :hot AND t.step = 0
+                            THEN (r.cap - t.pv_kw) * t.h ELSE 0 END) AS missed
+            FROM throttled t JOIN reference r ON r.slot = t.slot
+            GROUP BY t.bucket
+            ORDER BY t.bucket
+        """
+        split = {"tank_hot": 0.0, "at_max": 0.0, "headroom": 0.0, "missed": 0.0}
+        with self._connect() as conn:
+            cursor = conn.execute(
+                curtail_sql,
+                {
+                    **params,
+                    "slots": CURTAILMENT_SLOTS_PER_DAY,
+                    "min_pv": CURTAILMENT_MIN_PV_KW,
+                    "export_eps": CURTAILMENT_EXPORT_EPS_KW,
+                    "zero": self._zero_threshold_kw,
+                    "full": self._battery_full_soc_pct,
+                    "hot": self._heating_start_max_temp_c,
+                    "step_max": self._step_max,
+                },
+            )
+            for row in cursor:
+                target = by_bucket.get(row["bucket"])
+                if target is not None:
+                    target["loss_curtailed"] = row["curtailed"] or 0.0
+                for key in split:
+                    split[key] += row[key] or 0.0
+
+        return {
+            "battery_in_kwh": charged,
+            "battery_out_kwh": drawn,
+            "battery_stored_kwh": (
+                0.0
+                if soc_first is None
+                else (soc_last - soc_first) / 100.0 * self._battery_capacity_kwh
+            ),
+            "curtailed_split": split,
+        }
+
+    def _summarise_losses(self, extra: dict, totals: dict) -> dict:
+        """Turn the per-bucket sums into the figures the tile reports."""
+        overhead = totals["loss_overhead"]
+        battery = totals["loss_battery"]
+        charged = extra["battery_in_kwh"]
+        stored = extra["battery_stored_kwh"]
+        # Over a short window most of what went in is still in there, and what
+        # is left over is smaller than the error on the capacity constant. Say
+        # so, rather than print a number that reads as a catastrophic loss.
+        battery_usable = (
+            charged > 0 and abs(stored) <= BATTERY_LOSS_MAX_STORED_SHARE * charged
+        )
+        round_trip = (
+            round(100.0 * (extra["battery_out_kwh"] + stored) / charged, 1)
+            if battery_usable
+            else None
+        )
+        real = overhead + (battery if battery_usable else 0.0)
+        pv = totals["pv"]
+        curtailed = totals["loss_curtailed"]
+        return {
+            "overhead_kwh": round(overhead, 2),
+            "battery_kwh": round(battery, 2) if battery_usable else None,
+            "battery_round_trip_pct": round_trip,
+            "battery_in_kwh": round(charged, 2),
+            "battery_stored_kwh": round(stored, 2),
+            "real_kwh": round(real, 2),
+            "real_pct_of_pv": round(100.0 * real / pv, 1) if pv > 0 else None,
+            "curtailed_kwh": round(curtailed, 2),
+            "curtailed_pct_of_pv": round(100.0 * curtailed / pv, 1) if pv > 0 else None,
+            "curtailed_split": {k: round(v, 2) for k, v in extra["curtailed_split"].items()},
+            "curtailment_window_min": round(24 * 60 / CURTAILMENT_SLOTS_PER_DAY),
         }
 
     def wallbox_sessions(self, since_iso: str, gap_minutes: int = 15) -> list[dict]:
