@@ -85,8 +85,19 @@ class SurplusController:
         self._stop_event.set()
 
     def run_forever(self) -> None:
+        # The inverter IS waited for: without it a tick has nothing to read,
+        # nothing to decide on and nothing to record, so there is no point
+        # spinning the loop.
         self._connect_with_retry("GoodWe inverter", self._reader.connect)
-        self._connect_with_retry("AskoHeat", self._askoheat.connect)
+        # The AskoHeat is NOT waited for. Every operation on it reconnects by
+        # itself (see AskoHeatController._with_retry) and _tick() already
+        # treats a heater that does not answer as a reportable condition
+        # rather than a fatal one. Blocking here instead meant that an
+        # immersion heater which was simply switched off took the whole
+        # dashboard down with it: the loop never reached its first tick,
+        # /api/live had nothing to return and answered 503 for an hour while
+        # the inverter was reachable the entire time.
+        self._connect_once("AskoHeat", self._askoheat.connect)
         self._current_step = self._read_initial_step()
         self._pending_initial_hold = True
         try:
@@ -113,6 +124,23 @@ class SurplusController:
                     self._settings.poll_interval_s,
                 )
                 self._stop_event.wait(self._settings.poll_interval_s)
+
+    def _connect_once(self, device_name: str, connect_fn) -> None:
+        """Connect if the device answers, carry on without it if it does not.
+
+        For hardware whose absence degrades the service instead of stopping
+        it. The connection is re-established by the first operation that
+        succeeds after the device comes back.
+        """
+        try:
+            connect_fn()
+        except Exception:
+            logger.warning(
+                "%s did not answer at startup - continuing without it, "
+                "operations will reconnect once it is back",
+                device_name,
+                exc_info=True,
+            )
 
     def _read_initial_step(self) -> int:
         """reads the AskoHeat's currently commanded step so a restart of this
