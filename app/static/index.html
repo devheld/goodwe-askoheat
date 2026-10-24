@@ -228,6 +228,9 @@
     cursor: pointer;
   }
   .zoom-bar button:hover { color: var(--text-primary); border-color: var(--text-primary); }
+  /* An author `display` beats the browser's own `[hidden] { display: none }`,
+     so hiding the bar from JavaScript needs this rule to actually hide it. */
+  .zoom-bar[hidden] { display: none; }
   .zoom-hint { font-size: 11px; color: var(--text-muted); margin: 0 0 8px; }
 
   .chart-card {
@@ -364,6 +367,6 @@
 
   <p class="footer-note">As of: <span id="lastUpdate">-</span> · updates every <span id="updateInterval">-</span>s</p>
 </main>
-<script src="/static/app.js?v=11"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>
