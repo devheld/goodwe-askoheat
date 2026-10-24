@@ -208,6 +208,28 @@
     font-weight: 600;
   }
 
+  .zoom-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .zoom-bar button {
+    font: inherit;
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .zoom-bar button:hover { color: var(--text-primary); border-color: var(--text-primary); }
+  .zoom-hint { font-size: 11px; color: var(--text-muted); margin: 0 0 8px; }
+
   .chart-card {
     background: var(--surface-1);
     border: 1px solid var(--border);
@@ -302,6 +324,14 @@
 
   <div class="chart-card">
     <h2>Power</h2>
+    <p class="zoom-hint">
+      Drag across the chart to zoom into a span, scroll to zoom around the
+      pointer, double-click to go back out.
+    </p>
+    <div class="zoom-bar" id="powerZoomBar" hidden>
+      <span id="powerZoomLabel"></span>
+      <button type="button" id="powerZoomReset">Reset zoom</button>
+    </div>
     <div class="legend" id="powerLegend"></div>
     <div id="powerChartWrap"></div>
   </div>
@@ -334,6 +364,6 @@
 
   <p class="footer-note">As of: <span id="lastUpdate">-</span> · updates every <span id="updateInterval">-</span>s</p>
 </main>
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>

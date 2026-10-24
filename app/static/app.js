@@ -50,6 +50,12 @@ const POWER_SERIES_DEFS = [
 
 let currentHours = 24;
 
+// The window the Power chart is showing, or null for the whole fetched
+// range. Both live out here because the chart is rebuilt from scratch every
+// 60 seconds and would otherwise snap back while being read.
+let powerZoom = null;
+let lastHistory = { points: [], hours: 24 };
+
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
@@ -278,11 +284,91 @@ async function fetchLive() {
   }
 }
 
+// `hours` is the span actually on screen, not the span that was fetched -
+// zoomed into two hours of a 30 day range, every tick would otherwise read
+// the same date.
 function formatTick(date, hours) {
+  if (hours <= 0.5) {
+    return date.toLocaleTimeString("en-GB", {
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+  }
   if (hours <= 24) {
     return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   }
+  if (hours <= 24 * 4) {
+    return date.toLocaleString("en-GB", {
+      day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+    });
+  }
   return date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit" });
+}
+
+// Smallest window the chart will zoom to. At roughly one sample a minute,
+// two minutes still has points in it; below that the user is just looking at
+// the gaps between measurements.
+const MIN_ZOOM_MS = 2 * 60 * 1000;
+
+function clampWindow(from, to, lo, hi) {
+  // A pointer position measured against a detached element comes back
+  // non-finite; null means "no usable window", and every caller skips the
+  // event rather than inventing one.
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  let span = Math.max(MIN_ZOOM_MS, to - from);
+  span = Math.min(span, hi - lo);
+  let a = Math.round(from + (to - from) / 2 - span / 2);
+  a = Math.max(lo, Math.min(a, hi - span));
+  return { from: a, to: a + span };
+}
+
+// Redraws the Power chart from the rows already in hand. Zooming never goes
+// back to the server: /api/history hands over every recorded row for the
+// range, so the detail is already here, and refetching 37k rows on each
+// wheel tick would make the interaction unusable.
+function renderPower() {
+  const { points, hours } = lastHistory;
+  const powerSeries = POWER_SERIES_DEFS.map((def) => ({
+    name: def.name,
+    color: def.color,
+    points: points.map((p) => ({
+      t: new Date(p.timestamp),
+      v: def.value ? def.value(p) : p[def.key],
+    })),
+  }));
+  renderLegend(document.getElementById("powerLegend"), POWER_SERIES_DEFS);
+  renderLineChart(document.getElementById("powerChartWrap"), powerSeries, {
+    hours,
+    unit: "kW",
+    yMin: 0,
+    zoom: powerZoom,
+    onZoom: (next) => {
+      powerZoom = next;
+      renderPower();
+    },
+  });
+  renderPowerZoomBar();
+}
+
+function renderPowerZoomBar() {
+  const bar = document.getElementById("powerZoomBar");
+  const label = document.getElementById("powerZoomLabel");
+  if (!bar || !label) return;
+  if (!powerZoom) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  const from = new Date(powerZoom.from);
+  const to = new Date(powerZoom.to);
+  const minutes = Math.round((powerZoom.to - powerZoom.from) / 60000);
+  const span = minutes < 90
+    ? `${minutes} min`
+    : `${(minutes / 60).toFixed(minutes < 60 * 24 ? 1 : 0)} h`;
+  const sameDay = from.toDateString() === to.toDateString();
+  const fmtT = (d) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  label.textContent = sameDay
+    ? `${from.toLocaleDateString("en-GB")} ${fmtT(from)} - ${fmtT(to)} (${span})`
+    : `${from.toLocaleString("en-GB")} - ${to.toLocaleString("en-GB")} (${span})`;
 }
 
 // Renders a multi-series line chart as SVG with a hover crosshair.
@@ -299,6 +385,11 @@ function renderLineChart(container, series, opts) {
     yTickStep,
     yDecimals = 1,
     refLine,
+    // {from, to} in epoch ms, or null for the whole fetched range. Passing
+    // onZoom is what turns the interaction on, so the other charts on this
+    // page keep behaving exactly as before.
+    zoom = null,
+    onZoom = null,
   } = opts;
   const padL = 44, padR = 12, padT = 12, padB = 24;
   const innerW = width - padL - padR;
@@ -324,7 +415,23 @@ function renderLineChart(container, series, opts) {
     return [lo, hi];
   };
 
-  const [tMin, tMax] = extent(allPoints.map((p) => p.t.getTime()));
+  const [dataT0, dataT1] = extent(allPoints.map((p) => p.t.getTime()));
+  // The zoom window is clamped to the data rather than trusted: a stale
+  // window from a wider range would otherwise scroll the chart off its own
+  // axis after the range buttons narrowed the fetch.
+  const win = zoom ? clampWindow(zoom.from, zoom.to, dataT0, dataT1) : null;
+  const tMin = win ? win.from : dataT0;
+  const tMax = win ? win.to : dataT1;
+  const visibleHours = (tMax - tMin) / 3600000;
+
+  // Scaled to what is on screen, not to the whole fetch. Without this,
+  // zooming into a quiet night still measures the axis against a 28kW import
+  // spike from the previous afternoon and every line stays flat on the
+  // baseline - which is exactly the detail the zoom was supposed to reveal.
+  const inWindow = (p) => {
+    const t = p.t.getTime();
+    return t >= tMin && t <= tMax;
+  };
 
   // A series may be missing values in the middle without being shorter than
   // the others: the tooltip reads every series at the index it found in the
@@ -345,7 +452,7 @@ function renderLineChart(container, series, opts) {
     // only pad those.
     // Both come back as +/-Infinity when nothing is known, which the
     // vMin === vMax branch below turns into a plain 0..1 axis.
-    const [dataMin, dataMax] = extent(known.map((p) => p.v));
+    const [dataMin, dataMax] = extent(known.filter(inWindow).map((p) => p.v));
     vMin = yMinOpt !== undefined ? yMinOpt : Math.min(0, dataMin);
     vMax = yMaxOpt !== undefined ? yMaxOpt : Math.max(0, dataMax);
     if (!Number.isFinite(vMin)) vMin = 0;
@@ -399,7 +506,7 @@ function renderLineChart(container, series, opts) {
   for (let i = 0; i <= xTicks; i++) {
     const t = tMin + ((tMax - tMin) * i) / xTicks;
     const xx = x(t);
-    xAxisSvg += `<text x="${xx}" y="${height - 6}" text-anchor="middle" font-size="10" fill="${mutedColor}">${formatTick(new Date(t), hours)}</text>`;
+    xAxisSvg += `<text x="${xx}" y="${height - 6}" text-anchor="middle" font-size="10" fill="${mutedColor}">${formatTick(new Date(t), visibleHours)}</text>`;
   }
 
   function pathFor(points) {
@@ -447,6 +554,8 @@ function renderLineChart(container, series, opts) {
       <g class="hover-layer" style="display:none">
         <line class="crosshair" y1="${padT}" y2="${padT + innerH}" stroke="${mutedColor}" stroke-width="1" stroke-dasharray="3,3" />
       </g>
+      <rect class="zoom-band" y="${padT}" height="${innerH}" width="0" x="${padL}"
+            fill="${cssVar("--text-primary")}" opacity="0.12" style="display:none" />
       <rect x="${padL}" y="${padT}" width="${innerW}" height="${innerH}" fill="transparent" class="hover-target" />
     </svg>
     <div class="tooltip" style="position:relative;"></div>
@@ -474,12 +583,18 @@ function renderLineChart(container, series, opts) {
     const mouseX = (evt.clientX - rect.left) * scaleX;
     const t = tMin + ((mouseX - padL) / innerW) * (tMax - tMin);
 
-    let closest = sortedPoints[0];
+    // Only points inside the window: zoomed in, the nearest sample overall
+    // can be one that is scrolled off screen, and the crosshair would be
+    // drawn outside the plot for a reading the user cannot see.
+    let closest = null;
     let minDiff = Infinity;
     for (const p of sortedPoints) {
-      const diff = Math.abs(p.t.getTime() - t);
+      const pt = p.t.getTime();
+      if (pt < tMin || pt > tMax) continue;
+      const diff = Math.abs(pt - t);
       if (diff < minDiff) { minDiff = diff; closest = p; }
     }
+    if (!closest) return;
     const idx = sortedPoints.indexOf(closest);
     const xx = x(closest.t.getTime());
 
@@ -511,6 +626,76 @@ function renderLineChart(container, series, opts) {
     hoverLayer.style.display = "none";
     tooltip.style.display = "none";
   });
+
+  if (!onZoom) return;
+
+  // --- zoom -----------------------------------------------------------
+  // Three ways in, because none of them is discoverable on its own: drag a
+  // span, wheel towards a point, double-click to come back out.
+  const band = svg.querySelector(".zoom-band");
+  const toTime = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    const px = (clientX - rect.left) * (width / rect.width);
+    return tMin + ((px - padL) / innerW) * (tMax - tMin);
+  };
+  let dragFrom = null;
+
+  target.style.cursor = "ew-resize";
+
+  target.addEventListener("mousedown", (evt) => {
+    if (evt.button !== 0) return;
+    evt.preventDefault();
+    dragFrom = toTime(evt.clientX);
+    band.style.display = "block";
+    tooltip.style.display = "none";
+  });
+
+  target.addEventListener("mousemove", (evt) => {
+    if (dragFrom === null) return;
+    const a = x(Math.min(dragFrom, toTime(evt.clientX)));
+    const b = x(Math.max(dragFrom, toTime(evt.clientX)));
+    band.setAttribute("x", Math.max(padL, a));
+    band.setAttribute("width", Math.max(0, Math.min(b, padL + innerW) - Math.max(padL, a)));
+    // The crosshair and tooltip would fight the selection for attention.
+    hoverLayer.style.display = "none";
+    tooltip.style.display = "none";
+  });
+
+  const endDrag = (evt) => {
+    if (dragFrom === null) return;
+    const to = toTime(evt.clientX);
+    const from = dragFrom;
+    dragFrom = null;
+    band.style.display = "none";
+    band.setAttribute("width", 0);
+    // A plain click is not a selection - without this every click on the
+    // chart would zoom to a zero-width window.
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return;
+    if (Math.abs(to - from) < MIN_ZOOM_MS / 4) return;
+    const next = clampWindow(Math.min(from, to), Math.max(from, to), dataT0, dataT1);
+    if (next) onZoom(next);
+  };
+  target.addEventListener("mouseup", endDrag);
+  // Released outside the plot area: still a finished drag, not a stuck one.
+  window.addEventListener("mouseup", endDrag);
+
+  target.addEventListener("wheel", (evt) => {
+    evt.preventDefault();
+    const focus = toTime(evt.clientX);
+    if (!Number.isFinite(focus)) return;
+    const factor = evt.deltaY < 0 ? 0.7 : 1 / 0.7;
+    const span = (tMax - tMin) * factor;
+    if (span >= dataT1 - dataT0) {
+      onZoom(null);
+      return;
+    }
+    // Keep whatever is under the pointer under the pointer.
+    const share = (focus - tMin) / (tMax - tMin);
+    const next = clampWindow(focus - span * share, focus + span * (1 - share), dataT0, dataT1);
+    if (next) onZoom(next);
+  }, { passive: false });
+
+  target.addEventListener("dblclick", () => onZoom(null));
 }
 
 // Maps every controller status code to a display category so the timeline
@@ -663,16 +848,8 @@ async function fetchHistory(hours) {
     const data = await res.json();
     const points = data.points;
 
-    const powerSeries = POWER_SERIES_DEFS.map((def) => ({
-      name: def.name,
-      color: def.color,
-      points: points.map((p) => ({
-        t: new Date(p.timestamp),
-        v: def.value ? def.value(p) : p[def.key],
-      })),
-    }));
-    renderLegend(document.getElementById("powerLegend"), POWER_SERIES_DEFS);
-    renderLineChart(document.getElementById("powerChartWrap"), powerSeries, { hours, unit: "kW", yMin: 0 });
+    lastHistory = { points, hours };
+    renderPower();
 
     // Rows from before the battery-priority logic have no SOC - filtered
     // out rather than drawn as 0, which would look like an empty battery.
@@ -767,6 +944,14 @@ async function fetchHistory(hours) {
 }
 
 function setupRangeButtons() {
+  const zoomReset = document.getElementById("powerZoomReset");
+  if (zoomReset) {
+    zoomReset.addEventListener("click", () => {
+      powerZoom = null;
+      renderPower();
+    });
+  }
+
   const row = document.getElementById("rangeRow");
   row.addEventListener("click", (evt) => {
     const btn = evt.target.closest("button[data-hours]");
@@ -774,6 +959,9 @@ function setupRangeButtons() {
     row.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", "false"));
     btn.setAttribute("aria-pressed", "true");
     currentHours = parseInt(btn.dataset.hours, 10);
+    // Picking a range is asking for that range, not for the old window
+    // inside it.
+    powerZoom = null;
     fetchHistory(currentHours);
   });
 }
