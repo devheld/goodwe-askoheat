@@ -64,7 +64,7 @@ function money(value) {
 
 // Consumed kWh are priced at the import tariff even when they came off the
 // roof: that is the purchase they replaced. Exported kWh are priced at the
-// lower feed-in tariff.
+// lower export tariff.
 function rateFor(kind) {
   return kind === "export" ? state.tariff.export_per_kwh : state.tariff.import_per_kwh;
 }
@@ -224,9 +224,9 @@ function renderKpis(energy) {
       value: kwh(t.pv),
       // What the roof was worth, not what it would cost to buy: the part
       // that stayed in the house replaced a purchase, the part that left
-      // earned the (much lower) feed-in rate.
+      // earned the (much lower) export rate.
       money: money(c.saved),
-      sub: `${fmt(c.self_consumed_kwh)} kWh used, ${fmt(t.grid_export)} kWh fed in`,
+      sub: `${fmt(c.self_consumed_kwh)} kWh used, ${fmt(t.grid_export)} kWh exported`,
       color: "--e-solar",
     },
     {
@@ -244,10 +244,10 @@ function renderKpis(energy) {
       color: "--e-import",
     },
     {
-      label: "Grid feed-in",
+      label: "Grid export",
       value: kwh(t.grid_export),
       money: money(c.earned),
-      sub: `Fed in at ${money(state.tariff.export_per_kwh)}/kWh`,
+      sub: `Exported at ${money(state.tariff.export_per_kwh)}/kWh`,
       color: "--e-export",
     },
     {
@@ -640,7 +640,7 @@ function renderGrid(energy) {
           { color: "--e-import", label: "Grid import", value: kwhWithCost(d.grid_import) },
           {
             color: "--e-export",
-            label: "Grid feed-in",
+            label: "Grid export",
             value: kwhWithCost(d.grid_export, "export"),
           },
         ]),
@@ -838,7 +838,7 @@ function renderEnergy() {
 
   renderLegend("legendGrid", [
     { key: "grid_import", name: "Grid import", color: "--e-import" },
-    { key: "grid_export", name: "Grid feed-in", color: "--e-export" },
+    { key: "grid_export", name: "Grid export", color: "--e-export" },
   ]);
   renderLegend("legendDonut", CONSUMERS);
 
@@ -882,7 +882,7 @@ async function load() {
     "kWh are integrated from one power sample per poll interval, not read from a meter. " +
     "Gaps longer than 5 minutes count as 5 minutes, so a service outage cannot invent energy. " +
     `Prices in brackets use ${money(state.tariff.import_per_kwh)}/kWh for consumption and ` +
-    `${money(state.tariff.export_per_kwh)}/kWh for feed-in, both set in the .env file.`;
+    `${money(state.tariff.export_per_kwh)}/kWh for export, both set in the .env file.`;
 }
 
 document.getElementById("periodRow").addEventListener("click", (event) => {

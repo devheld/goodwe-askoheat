@@ -141,7 +141,7 @@ async def energy(period: str = Query("today")) -> dict:
         "self_consumed_kwh": round(self_consumed, 3),
     }
 
-    # Losses are priced at the import tariff, not the feed-in tariff: with
+    # Losses are priced at the import tariff, not the export tariff: with
     # this installation exporting 0.6% of its production, a kWh that was lost
     # or held back is a kWh that had to be bought instead, not one that failed
     # to be sold.

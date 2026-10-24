@@ -5,7 +5,7 @@ const TILE_DEFS = [
   { key: "battery_discharge_kw", label: "Battery (Discharging)", unit: "kW", color: "--series-batt-discharge" },
   { key: "battery_soc_pct", label: "Battery Charge Level", unit: "%", color: "--series-soc" },
   { key: "grid_import_kw", label: "Grid Import", unit: "kW", color: "--series-grid" },
-  { key: "grid_export_kw", label: "Grid Feed-in", unit: "kW", color: "--series-grid-export" },
+  { key: "grid_export_kw", label: "Grid Export", unit: "kW", color: "--series-grid-export" },
 ];
 
 const ASKO_TILE_DEFS = [
@@ -36,7 +36,7 @@ const POWER_SERIES_DEFS = [
   // line out of the chart and across the card below it.
   { key: "grid_import_kw", name: "Grid Import", color: "--series-grid",
     value: (p) => Math.max(0, -p.grid_kw) },
-  { key: "grid_export_kw", name: "Grid Feed-in", color: "--series-grid-export",
+  { key: "grid_export_kw", name: "Grid Export", color: "--series-grid-export",
     value: (p) => Math.max(0, p.grid_kw) },
   // Null wherever the charger has nothing to say: every row from before it
   // was wired up, and every poll it did not answer. Kept as null rather than
