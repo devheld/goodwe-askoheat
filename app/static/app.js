@@ -38,6 +38,14 @@ const POWER_SERIES_DEFS = [
     value: (p) => Math.max(0, -p.grid_kw) },
   { key: "grid_export_kw", name: "Grid Feed-in", color: "--series-grid-export",
     value: (p) => Math.max(0, p.grid_kw) },
+  // Null wherever the charger has nothing to say: every row from before it
+  // was wired up, and every poll it did not answer. Kept as null rather than
+  // folded to 0 so the chart leaves a gap instead of claiming the car was
+  // plugged in and drawing nothing.
+  { key: "wallbox_power_kw", name: "Wallbox", color: "--series-wallbox",
+    value: (p) => (p.wallbox_power_kw === null || p.wallbox_power_kw === undefined
+      ? null
+      : p.wallbox_power_kw) },
 ];
 
 let currentHours = 24;
@@ -78,7 +86,9 @@ function renderTiles(containerId, defs, latest) {
         sub = "Discharging";
       }
     } else if (def.key === "step") {
-      valueText = `${latest.step}${def.unit}`;
+      valueText = latest.step === null || latest.step === undefined
+        ? "-"
+        : `${latest.step}${def.unit}`;
       if (latest.status === "battery") {
         sub = "Battery has priority";
       } else if (latest.status === "capped") {
@@ -89,7 +99,11 @@ function renderTiles(containerId, defs, latest) {
         subClass = "sub warning";
       }
     } else if (def.key === "heater_load_w") {
-      valueText = `${latest.heater_load_w} ${def.unit}`;
+      // Null whenever there is no reading at all - printing it raw put
+      // "null W" on the dashboard.
+      valueText = latest.heater_load_w === null || latest.heater_load_w === undefined
+        ? "-"
+        : `${latest.heater_load_w} ${def.unit}`;
     } else if (def.key === "askoheat_temp_c") {
       valueText = latest.askoheat_temp_c === null || latest.askoheat_temp_c === undefined
         ? "-"
@@ -296,8 +310,27 @@ function renderLineChart(container, series, opts) {
     return;
   }
 
-  const tMin = Math.min(...allPoints.map((p) => p.t.getTime()));
-  const tMax = Math.max(...allPoints.map((p) => p.t.getTime()));
+  // Looped rather than Math.min(...array): each argument of a spread goes
+  // on the stack, and 30 days across seven series is a few hundred thousand
+  // of them - "Maximum call stack size exceeded", which the page reported as
+  // "Failed to load history" and an empty card.
+  const extent = (values) => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of values) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    return [lo, hi];
+  };
+
+  const [tMin, tMax] = extent(allPoints.map((p) => p.t.getTime()));
+
+  // A series may be missing values in the middle without being shorter than
+  // the others: the tooltip reads every series at the index it found in the
+  // first one, so dropping the rows instead would line each series up
+  // against the wrong timestamp.
+  const known = allPoints.filter((p) => p.v !== null && p.v !== undefined);
 
   // Y domain: either fixed (e.g. heater step 0-7) or derived from the data
   // with some padding.
@@ -310,8 +343,13 @@ function renderLineChart(container, series, opts) {
   } else {
     // one or no bound fixed - derive the other one(s) from the data and
     // only pad those.
-    vMin = yMinOpt !== undefined ? yMinOpt : Math.min(0, ...allPoints.map((p) => p.v));
-    vMax = yMaxOpt !== undefined ? yMaxOpt : Math.max(0, ...allPoints.map((p) => p.v));
+    // Both come back as +/-Infinity when nothing is known, which the
+    // vMin === vMax branch below turns into a plain 0..1 axis.
+    const [dataMin, dataMax] = extent(known.map((p) => p.v));
+    vMin = yMinOpt !== undefined ? yMinOpt : Math.min(0, dataMin);
+    vMax = yMaxOpt !== undefined ? yMaxOpt : Math.max(0, dataMax);
+    if (!Number.isFinite(vMin)) vMin = 0;
+    if (!Number.isFinite(vMax)) vMax = 0;
     if (vMin === vMax) { vMax += 1; }
     const vPad = (vMax - vMin) * 0.1;
     if (yMinOpt === undefined) vMin -= vPad;
@@ -367,17 +405,26 @@ function renderLineChart(container, series, opts) {
   function pathFor(points) {
     if (points.length === 0) return "";
     let d = "";
+    // `pen` is false whenever the previous point was missing, so the line
+    // restarts with a move instead of jumping across the gap. Without it one
+    // null produced `L x NaN` and the browser dropped the rest of the path.
+    let pen = false;
     points.forEach((p, i) => {
+      if (p.v === null || p.v === undefined) {
+        pen = false;
+        return;
+      }
       const xx = x(p.t.getTime());
       const yy = y(p.v);
-      if (i === 0) {
-        d += `M ${xx} ${yy}`;
+      if (!pen) {
+        d += ` M ${xx} ${yy}`;
       } else if (stepped) {
         const prevY = y(points[i - 1].v);
         d += ` L ${xx} ${prevY} L ${xx} ${yy}`;
       } else {
         d += ` L ${xx} ${yy}`;
       }
+      pen = true;
     });
     return d;
   }
@@ -443,7 +490,9 @@ function renderLineChart(container, series, opts) {
     let rows = series
       .map((s) => {
         const p = s.points[idx];
-        if (!p) return "";
+        // No row, or a row the device had nothing to say about - leave the
+        // series out of the tooltip rather than print a nonexistent 0.
+        if (!p || p.v === null || p.v === undefined) return "";
         return `<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${cssVar(s.color)};margin-right:6px;"></span>${s.name}: <b>${p.v.toFixed(2)}${unit}</b></div>`;
       })
       .join("");
