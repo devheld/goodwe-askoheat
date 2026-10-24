@@ -50,6 +50,10 @@ function fmt(value, digits = 1) {
   });
 }
 
+function kwh(value, digits = 1) {
+  return `${fmt(value, digits)} kWh`;
+}
+
 function money(value) {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
   return `${value.toLocaleString("en-GB", {
@@ -211,42 +215,54 @@ function renderKpis(energy) {
   const t = energy.totals;
   const m = energy.metrics;
   const c = energy.costs;
+  // Six tiles with the same three lines, in the order the energy moves:
+  // produced, used, and what crossed the meter either way. Then the three
+  // that do not measure energy in kWh-and-francs and are left as they were.
   const tiles = [
     {
-      label: "Spent on electricity",
-      value: money(c.spent),
-      sub: `${fmt(t.grid_import)} kWh bought at ${money(state.tariff.import_per_kwh)}/kWh`,
-      color: "--e-import",
-    },
-    {
-      label: "Saved by solar",
-      value: money(c.saved),
-      sub: `${money(c.avoided)} not bought, ${money(c.earned)} fed in`,
-      color: "--e-export",
-    },
-    {
-      label: "Consumption",
-      value: `${fmt(t.consumption)} kWh`,
-      sub: `Worth ${money(c.consumption_value)} at the import price`,
-      color: "--e-house",
-    },
-    {
-      label: "Solar",
-      value: `${fmt(t.pv)} kWh`,
-      sub: `${fmt(c.self_consumed_kwh)} kWh used directly`,
+      label: "PV production",
+      value: kwh(t.pv),
+      // What the roof was worth, not what it would cost to buy: the part
+      // that stayed in the house replaced a purchase, the part that left
+      // earned the (much lower) feed-in rate.
+      money: money(c.saved),
+      sub: `${fmt(c.self_consumed_kwh)} kWh used, ${fmt(t.grid_export)} kWh fed in`,
       color: "--e-solar",
     },
     {
+      label: "Total consumption",
+      value: kwh(t.consumption),
+      money: money(c.consumption_value),
+      sub: `${fmt(t.grid_import)} kWh of it from the grid`,
+      color: "--e-house",
+    },
+    {
       label: "Grid import",
-      value: `${fmt(t.grid_import)} kWh`,
-      sub: `Bought for ${money(c.spent)}`,
+      value: kwh(t.grid_import),
+      money: money(c.spent),
+      sub: `Bought at ${money(state.tariff.import_per_kwh)}/kWh`,
       color: "--e-import",
     },
     {
       label: "Grid feed-in",
-      value: `${fmt(t.grid_export)} kWh`,
-      sub: `Earned ${money(c.earned)}`,
+      value: kwh(t.grid_export),
+      money: money(c.earned),
+      sub: `Fed in at ${money(state.tariff.export_per_kwh)}/kWh`,
       color: "--e-export",
+    },
+    {
+      label: "AskoHeat",
+      value: kwh(t.asko),
+      money: cost(t.asko),
+      sub: "Immersion heater",
+      color: "--e-asko",
+    },
+    {
+      label: "Wallbox",
+      value: kwh(t.wallbox),
+      money: cost(t.wallbox),
+      sub: "Car charging",
+      color: "--e-wallbox",
     },
     {
       label: "Self-sufficiency",
@@ -255,20 +271,8 @@ function renderKpis(energy) {
       color: "--e-solar",
     },
     {
-      label: "AskoHeat",
-      value: `${fmt(t.asko)} kWh`,
-      sub: `Immersion heater, ${cost(t.asko)}`,
-      color: "--e-asko",
-    },
-    {
-      label: "Wallbox",
-      value: `${fmt(t.wallbox)} kWh`,
-      sub: `Car charging, ${cost(t.wallbox)}`,
-      color: "--e-wallbox",
-    },
-    {
       label: "Battery",
-      value: `${fmt(t.battery_charge)} kWh`,
+      value: kwh(t.battery_charge),
       sub: `charged, ${fmt(t.battery_discharge)} kWh drawn`,
       color: "--e-battery",
     },
@@ -288,6 +292,7 @@ function renderKpis(energy) {
     el.innerHTML = `
       <div class="label"><span class="dot" style="background:${cssVar(tile.color)}"></span>${tile.label}</div>
       <div class="value">${tile.value}</div>
+      ${tile.money ? `<div class="money">${tile.money}</div>` : ""}
       <div class="sub">${tile.sub}</div>`;
     wrap.appendChild(el);
   }

@@ -129,6 +129,15 @@
   }
   .tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
   .tile .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* The price of the line above it: big enough to read as a second
+     headline, quiet enough not to compete with the kWh. */
+  .tile .money {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    margin-top: 1px;
+  }
   .tile .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
   /* The loss tile carries its own breakdown, so it takes two columns: at
      one column width every line wrapped between its label and its number.
@@ -295,6 +304,6 @@
 </main>
 <div id="tooltip" role="tooltip" aria-hidden="true"></div>
 <script src="/static/vendor/d3.v7.min.js"></script>
-<script src="/static/energy.js?v=5"></script>
+<script src="/static/energy.js?v=6"></script>
 </body>
 </html>
