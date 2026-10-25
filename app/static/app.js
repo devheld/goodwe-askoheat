@@ -165,6 +165,21 @@ function renderWallbox(wb, tariff) {
     return;
   }
 
+  // Reading the charger cuts the charging current on this hardware, so the
+  // poll is suspended while a car draws and these values stand still. Say so
+  // rather than let the panel look stuck - see Controller._poll_wallbox.
+  if (wb.poll_suspended) {
+    note.textContent =
+      "A car is charging, so the wallbox is not being read: every Modbus read drops " +
+      "the charging current to 0 A for about two minutes on this hardware. The values " +
+      "below are the last reading from before the charge started and will refresh once " +
+      "it finishes.";
+  } else {
+    note.textContent =
+      "The wallbox allows only two Modbus sessions and one is normally taken by the " +
+      "SEMS cloud, so a reading here can fail when both slots are busy.";
+  }
+
   // Charging is the one state worth colouring; everything else stays neutral
   // so a glance at the panel shows whether power is actually flowing.
   const statusColor = wb.charging ? "--success" : "--series-wallbox";

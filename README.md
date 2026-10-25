@@ -224,6 +224,50 @@ What the devices look like now:
 The one thing still waited for is the inverter *as a data source*: without it
 a tick has nothing to measure, so it records nothing and says so.
 
+### 7. Reading the charger was interrupting the charge
+
+A car plugged into the wallbox charged for 3.5 minutes, paused for 2.3, and
+repeated for hours. The search for the cause ran through the obvious
+suspects first and all of them were wrong: a grid import limit, the house
+battery charging from the grid alongside the car, the charger's dynamic load
+control, the car's onboard charger overheating. Each one looked plausible,
+and each was ruled out by the same observation - the cycle stayed at 5.9
+minutes whether the energy came from the grid at 16 kW, from the house
+battery at zero grid import, or from PV, and whatever limit was configured.
+A regulator reacting to power cannot produce a constant period across that
+range.
+
+5.9 minutes is `WALLBOX_POLL_INTERVAL_S=300` rounded up to the 70-second
+tick grid. Every pause began one tick after a poll. **Reading any register
+over Modbus interrupts a charge on this hardware**: the box drops the
+charging current to 0 A while still reporting status 3 ("Charging"), and the
+car takes current again about two minutes after the TCP connection closes.
+This is documented behaviour for the GW11K-HCA in [evcc discussion
+#13970](https://github.com/evcc-io/evcc/discussions/13970), and from the
+other side for the G2 in [#30669](https://github.com/evcc-io/evcc/discussions/30669),
+where opening a connection at all stops the charge.
+
+The proof was to stop polling: the same car then charged 17.6 minutes
+without a break, against a previous best of 3.6 minutes across four days of
+recorded data.
+
+`Controller._poll_wallbox` now skips the read entirely while a car is
+drawing. What counts as drawing is the household load above the heater,
+compared against `WALLBOX_BUSY_LOAD_KW` (3.0 kW by default - above a house
+base load, below a three-phase car at the 6 A minimum of 4.14 kW). Between
+skipped polls the last snapshot is reused and the dashboard says why it is
+standing still.
+
+Two lessons worth keeping:
+
+- **The risk was already written down.** The docstring of
+  `GoodWeWallboxReader` cited #30669 and named the exact test - "a charge
+  that stops within a poll interval of a reconnect". An earlier measurement
+  had dismissed it, but that measurement was taken with no car charging,
+  which is the only condition under which the fault can appear.
+- **A constant period rules out a power-dependent cause.** That one fact was
+  available from the start and would have skipped every wrong hypothesis.
+
 ## Setup
 
 ```

@@ -67,6 +67,7 @@ class SurplusController:
         self._wallbox_state: dict | None = None
         self._wallbox_snapshot: dict | None = None
         self._wallbox_polled_at: float | None = None
+        self._wallbox_poll_suspended = False
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -514,7 +515,12 @@ class SurplusController:
         # Dashboard-only, and deliberately after the heating decision above so
         # a slow or unreachable wallbox can never delay or change it. The
         # client swallows its own errors and reports them as a payload.
-        wallbox = self._poll_wallbox()
+        # Everything drawn above the heater is taken to be the car, which is
+        # what decides whether the charger may be read at all right now - see
+        # _poll_wallbox. heater_load_w is -1 when the AskoHeat failed.
+        wallbox = self._poll_wallbox(
+            readings.consumption_kw - max(heater_load_w, 0) / 1000
+        )
 
         timestamp = datetime.now(timezone.utc).isoformat()
         reading = Reading(
@@ -582,17 +588,54 @@ class SurplusController:
             status_text,
         )
 
-    def _poll_wallbox(self) -> dict | None:
-        """Read the charger on its own, slower clock.
+    def _poll_wallbox(self, vehicle_load_kw: float | None = None) -> dict | None:
+        """Read the charger on its own, slower clock - and not at all while a
+        car is drawing.
 
         The heating loop runs every minute, but the charger has only one
         free Modbus slot and the owner's own app competes for it, so it is
         read every wallbox_poll_interval_s instead. Between reads the last
         snapshot is reused, which keeps the dashboard populated and gives
         the energy integration a value to carry forward.
+
+        Reading ANY register interrupts a charge in progress on this
+        hardware. The box drops the charging current to 0A while still
+        reporting status 3 ("Charging"), and the car takes current again
+        around two minutes after the TCP connection closes. Known on the
+        GW11K-HCA as evcc discussion #13970, and from the other side on the
+        G2 as #30669, where opening a connection at all stops the charge.
+
+        Measured here on 25 Oct 2026: charges ran 3.5 minutes and paused 2.3
+        minutes, a 5.9-minute cycle that is exactly this poll interval
+        rounded up to the 70s tick grid, with every pause starting one tick
+        after a poll. The rhythm was identical whether the energy came from
+        the grid at 16kW, from the house battery at zero grid import, or
+        from PV, and identical across every import limit tried - none of
+        those was the cause. With polling off the same car then charged 17.6
+        minutes without a break, against a previous best of 3.6 minutes in
+        four days of data.
+
+        So while a car draws, the charger is left alone and the last
+        snapshot is reused. The cost is a dashboard panel that freezes
+        during a charge; the alternative is a car that charges at 58% duty.
         """
         if self._wallbox is None:
             return None
+
+        if vehicle_load_kw is None:
+            # No fresh reading to judge by, so the inverter is unreachable.
+            # Keep whatever the last tick decided rather than risk cutting a
+            # charge that is probably still running.
+            busy = self._wallbox_poll_suspended
+        else:
+            busy = vehicle_load_kw >= self._settings.wallbox_busy_load_kw
+        self._wallbox_poll_suspended = busy
+
+        if busy:
+            if self._wallbox_snapshot is None:
+                return None
+            return {**self._wallbox_snapshot, "poll_suspended": True}
+
         now = time.monotonic()
         if (
             self._wallbox_polled_at is None
@@ -619,7 +662,9 @@ class SurplusController:
                     "total_energy_kwh": None,
                     "charge_mode": None,
                 }
-        return self._wallbox_snapshot
+        if self._wallbox_snapshot is None:
+            return None
+        return {**self._wallbox_snapshot, "poll_suspended": False}
 
     def _record_wallbox_event(self, timestamp: str, wallbox: dict) -> None:
         """Append to the charger's event log, but only when something changed.

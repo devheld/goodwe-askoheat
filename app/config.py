@@ -35,6 +35,7 @@ class Settings:
     # charger has one free Modbus slot and the owner's app needs it
     # too, so this reader takes it briefly and rarely.
     wallbox_poll_interval_s: int
+    wallbox_busy_load_kw: float
 
     step_min: int
     step_max: int
@@ -93,6 +94,12 @@ def load_settings() -> Settings:
         wallbox_poll_interval_s=int(
             os.environ.get("WALLBOX_POLL_INTERVAL_S", "300")
         ),
+        # Household load above the heater that means a car is drawing, and
+        # therefore that the charger must not be touched. See
+        # Controller._poll_wallbox. Above the house's base load (measured up
+        # to 2.5kW here) and below a three-phase car at the 6A minimum
+        # (4.14kW), so neither a kettle nor a slow charge is misread.
+        wallbox_busy_load_kw=float(os.environ.get("WALLBOX_BUSY_LOAD_KW", "3.0")),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),
