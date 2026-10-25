@@ -146,6 +146,24 @@ function renderWallbox(wb, tariff) {
   note.hidden = false;
   wrap.innerHTML = "";
 
+  // Restarted while a car was charging, so there is no snapshot to show and
+  // reading one would interrupt the charge. An empty panel would read as a
+  // fault, so name the reason.
+  if (wb.awaiting_first_read) {
+    const el = document.createElement("div");
+    el.className = "tile";
+    el.innerHTML = `
+      <div class="label"><span class="dot" style="background:${cssVar("--series-wallbox")}"></span>Wallbox</div>
+      <div class="value">Not read</div>
+      <div class="sub">A car is charging and reading the charger would interrupt it</div>
+    `;
+    wrap.appendChild(el);
+    note.textContent =
+      "Every Modbus read drops this charger's current to 0 A for about two minutes, so " +
+      "it is left alone while a car draws. The panel fills in once the charge finishes.";
+    return;
+  }
+
   const tile = (label, value, sub, subClass, color) => {
     const el = document.createElement("div");
     el.className = "tile";

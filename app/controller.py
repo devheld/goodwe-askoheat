@@ -543,7 +543,10 @@ class SurplusController:
             wallbox_energy_kwh=(wallbox or {}).get("total_energy_kwh"),
         )
         self._store.insert(reading)
-        if wallbox is not None:
+        # A suspended poll carries either the previous snapshot or no reading
+        # at all, so there is no transition to record and no complete payload
+        # to record it from.
+        if wallbox is not None and not wallbox.get("poll_suspended"):
             self._record_wallbox_event(timestamp, wallbox)
 
         with self._lock:
@@ -633,7 +636,10 @@ class SurplusController:
 
         if busy:
             if self._wallbox_snapshot is None:
-                return None
+                # Restarted mid-charge, so there is nothing to reuse. Polling
+                # once just to fill the panel would cut the charge, which is
+                # the whole thing this is avoiding - report the gap instead.
+                return {"poll_suspended": True, "awaiting_first_read": True}
             return {**self._wallbox_snapshot, "poll_suspended": True}
 
         now = time.monotonic()
