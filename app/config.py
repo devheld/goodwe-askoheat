@@ -36,6 +36,8 @@ class Settings:
     # too, so this reader takes it briefly and rarely.
     wallbox_poll_interval_s: int
     wallbox_busy_load_kw: float
+    wallbox_idle_ticks: int
+    wallbox_idle_poll_interval_s: int
 
     step_min: int
     step_max: int
@@ -100,6 +102,17 @@ def load_settings() -> Settings:
         # to 2.5kW here) and below a three-phase car at the 6A minimum
         # (4.14kW), so neither a kettle nor a slow charge is misread.
         wallbox_busy_load_kw=float(os.environ.get("WALLBOX_BUSY_LOAD_KW", "3.0")),
+        # Ticks the load must stay low before a charge counts as over. A dip
+        # of one tick is not the end of one: the longest pause measured here
+        # was 2.3 minutes, so five ticks of 70s outlasts it with room to
+        # spare, at the price of a first poll delayed by about six minutes.
+        wallbox_idle_ticks=int(os.environ.get("WALLBOX_IDLE_TICKS", "5")),
+        # Poll interval while a car is plugged in but taking nothing. Every
+        # read is a chance to block it from resuming, and a parked car needs
+        # no minute-by-minute detail.
+        wallbox_idle_poll_interval_s=int(
+            os.environ.get("WALLBOX_IDLE_POLL_INTERVAL_S", "1200")
+        ),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),

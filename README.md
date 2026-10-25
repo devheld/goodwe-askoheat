@@ -251,12 +251,37 @@ The proof was to stop polling: the same car then charged 17.6 minutes
 without a break, against a previous best of 3.6 minutes across four days of
 recorded data.
 
-`Controller._poll_wallbox` now skips the read entirely while a car is
+`SurplusController._poll_wallbox` now skips the read entirely while a car is
 drawing. What counts as drawing is the household load above the heater,
 compared against `WALLBOX_BUSY_LOAD_KW` (3.0 kW by default - above a house
 base load, below a three-phase car at the 6 A minimum of 4.14 kW). Between
 skipped polls the last snapshot is reused and the dashboard says why it is
 standing still.
+
+Three things make that gate hold up in practice:
+
+- **It waits before calling a charge over.** Resuming on the first quiet
+  tick would read into a pause and stop the car coming back, which is the
+  fault itself. The load has to stay low for `WALLBOX_IDLE_TICKS` (5, about
+  six minutes), well past the longest pause observed.
+- **A reading beats the estimate.** A single-phase car at the 6 A minimum
+  draws 1.38 kW and hides under the threshold. If a poll comes back with
+  current on any phase, the gate closes again immediately.
+- **A car on the cable is read slowly.** Charging or parked, the interval
+  becomes `WALLBOX_IDLE_POLL_INTERVAL_S` (20 minutes). For the single-phase
+  case above, where the load estimate is blind, this interval is the only
+  brake there is.
+
+`_charger_drawing` deliberately ignores the charger's own `charging` flag:
+this box reports status 3 ("Charging") throughout a pause *and* for a
+plugged-in car that has finished, with 0 A on every phase. Only the power
+and the phase currents tell a live charge from a finished one.
+
+Known limitation: a single-phase charge is still interrupted once per
+`WALLBOX_IDLE_POLL_INTERVAL_S`, costing roughly 10% of its throughput
+against 39% before. Closing that gap entirely would mean lowering
+`WALLBOX_BUSY_LOAD_KW` into the range of ordinary household appliances,
+which would suspend polling for an oven.
 
 Two lessons worth keeping:
 

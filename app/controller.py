@@ -68,6 +68,10 @@ class SurplusController:
         self._wallbox_snapshot: dict | None = None
         self._wallbox_polled_at: float | None = None
         self._wallbox_poll_suspended = False
+        # Starts satisfied: a fresh process has not just watched a charge
+        # end, so the first quiet tick may read the charger straight away
+        # instead of leaving the panel blank for the first six minutes.
+        self._wallbox_quiet_ticks = settings.wallbox_idle_ticks
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -631,7 +635,15 @@ class SurplusController:
             # charge that is probably still running.
             busy = self._wallbox_poll_suspended
         else:
-            busy = vehicle_load_kw >= self._settings.wallbox_busy_load_kw
+            drawing = vehicle_load_kw >= self._settings.wallbox_busy_load_kw
+            self._wallbox_quiet_ticks = 0 if drawing else self._wallbox_quiet_ticks + 1
+            # One quiet tick is not the end of a charge - it may be a pause,
+            # and reading into a pause is what stops the car coming back.
+            # Wait out wallbox_idle_ticks before calling it over.
+            busy = (
+                drawing
+                or self._wallbox_quiet_ticks < self._settings.wallbox_idle_ticks
+            )
         self._wallbox_poll_suspended = busy
 
         if busy:
@@ -642,14 +654,31 @@ class SurplusController:
                 return {"poll_suspended": True, "awaiting_first_read": True}
             return {**self._wallbox_snapshot, "poll_suspended": True}
 
+        # Any car on the cable is read on a slower clock. Parked, there is
+        # nothing changing to catch; charging, the load estimate has already
+        # failed to notice (a single-phase car at the 6A minimum draws
+        # 1.38kW, under the threshold) and every read costs it about two
+        # minutes, so the interval is the only brake left.
+        interval = self._settings.wallbox_poll_interval_s
+        last = self._wallbox_snapshot or {}
+        if last.get("vehicle_connected"):
+            interval = max(interval, self._settings.wallbox_idle_poll_interval_s)
+
         now = time.monotonic()
         if (
             self._wallbox_polled_at is None
-            or now - self._wallbox_polled_at >= self._settings.wallbox_poll_interval_s
+            or now - self._wallbox_polled_at >= interval
         ):
             self._wallbox_polled_at = now
             try:
                 self._wallbox_snapshot = self._wallbox.as_dict()
+                # The load threshold cannot see a single-phase car at the 6A
+                # minimum (1.38kW), so where the reading and the estimate
+                # disagree, believe the reading and stop reading.
+                if self._charger_drawing(self._wallbox_snapshot):
+                    self._wallbox_poll_suspended = True
+                    self._wallbox_quiet_ticks = 0
+                    return {**self._wallbox_snapshot, "poll_suspended": True}
             except Exception as exc:
                 # read() already turns a failure into an offline snapshot, so
                 # reaching here means something unforeseen - a hostname that
@@ -671,6 +700,21 @@ class SurplusController:
         if self._wallbox_snapshot is None:
             return None
         return {**self._wallbox_snapshot, "poll_suspended": False}
+
+    @staticmethod
+    def _charger_drawing(snapshot: dict | None) -> bool:
+        """Is current actually flowing?
+
+        Deliberately not the charger's own "charging" flag: this box reports
+        status 3 ("Charging") throughout a pause and for a plugged-in car
+        that has finished, with 0 A on every phase. Only the power and the
+        phase currents distinguish those from a live charge.
+        """
+        if not snapshot:
+            return False
+        if (snapshot.get("power_kw") or 0) > 0:
+            return True
+        return any((a or 0) > 0 for a in snapshot.get("currents_a") or ())
 
     def _record_wallbox_event(self, timestamp: str, wallbox: dict) -> None:
         """Append to the charger's event log, but only when something changed.
