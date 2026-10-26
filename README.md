@@ -77,6 +77,9 @@ while a running one is left to the AskoHeat's own ~65°C cutoff.
 - `app/controller.py` - `SurplusController`: the core control loop - on every
   poll, fetches GoodWe data, decides whether there is surplus, steps the
   AskoHeat up or down, and records the result
+- `app/shelly_client.py` - `ShellyClient`: reads a Shelly 3EM at the grid
+  connection point over HTTP - a second, independent meter, and the only
+  instrument here that measures the RMS current through the main fuse
 - `app/database.py` - `HistoryStore`: SQLite persistence for the dashboard's
   history charts
 - `app/main.py` - FastAPI app serving `/api/live`, `/api/history`, and the
@@ -292,6 +295,65 @@ Two lessons worth keeping:
   which is the only condition under which the fault can appear.
 - **A constant period rules out a power-dependent cause.** That one fact was
   available from the start and would have skipped every wrong hypothesis.
+
+### 8. The inverter's own numbers do not add up
+
+Everything the inverter reports about itself is in one of four figures: PV,
+house load, battery and grid. They should balance, and they don't. Energy in
+minus energy out leaves a remainder, always positive, in every operating
+state:
+
+| State | Missing | Samples |
+|---|---|---|
+| Battery idle, no PV (no conversion anywhere) | 0.12 kW | 6 189 |
+| PV running, battery idle | 0.09 kW | 7 616 |
+| Battery charging | 0.11 kW | 12 442 |
+| Battery discharging | 0.18 kW | 33 794 |
+
+The decisive property is that the remainder is **constant in absolute terms,
+not proportional**. Across the discharge range it stays between 0.15 and
+0.21 kW while the share falls from 26% at 0.5 kW to 1.6% at 13 kW. A
+conversion loss would scale with the power; a fixed draw does not. And it is
+present at 0.12 kW even with the battery idle and no PV, where the inverter
+is doing nothing but passing grid power through to the house and no
+conversion happens at all.
+
+That points at the inverter's own auxiliary supply: it sits between the
+meter point and whatever the inverter counts as "Total Load power", so it is
+paid for and never reported. At 0.12-0.19 kW continuously that is 3-4.5 kWh
+a day, or 1 100-1 600 kWh a year.
+
+What the inverter cannot do is witness this about itself - every number in
+the balance comes from the same device. A Shelly 3EM on the three main
+phases settles it from outside. Fourteen simultaneous samples agreed with
+register 35139 to 5 W on average (spread -20 to +27 W) while the connection
+point sat near zero, which rules out a miscalibrated grid measurement and
+leaves the gap inside the inverter: the battery delivers 0.86 kW, the load
+register reports 0.69 kW, the second meter confirms that nothing leaves to
+the grid.
+
+Two things this does not yet establish. The agreement was measured at a
+connection point near zero, so it pins the zero point and not the scale -
+the comparison at a real flow of several kW comes from the logged history.
+And a constant offset in the load register itself would look identical from
+outside; separating that from a real draw needs the utility meter, where
+3-4 kWh a day more import than the dashboard accounts for would confirm the
+draw is real.
+
+Sign conventions differ between the two meters, which is worth stating once:
+the Shelly reports import as positive power and accumulates export in a
+separate counter, the inverter's register 35139 is negative while importing.
+`ShellyClient` flips the Shelly's sign on the way in, so everything stored
+and served is export-positive. The flip was not guessed: watching which
+counter moved while two phases read -160/-210 W and one read +380 W settles
+it in 75 seconds.
+
+A side finding with its own consequence: the phases are not balanced and the
+current is not proportional to the active power. At a connection point
+summing to -15 W the individual phases still carried 1.3, 1.3 and 2.0 A at
+power factors between -0.45 and 0.78. The 25 A main fuse is per phase and
+carries RMS current, so fuse headroom cannot be estimated from active power
+- which is all the inverter offers. The Shelly measures it directly.
 
 ## Setup
 
