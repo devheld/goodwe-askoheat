@@ -15,6 +15,7 @@ from .config import settings
 from .controller import SurplusController
 from .database import PERIODS, HistoryStore
 from .goodwe_client import GoodWeModbusReader
+from .shelly_client import ShellyClient
 from .wallbox_client import GoodWeWallboxReader
 
 logging.basicConfig(
@@ -66,7 +67,12 @@ async def lifespan(app: FastAPI):
         if settings.wallbox_host
         else None
     )
-    controller = SurplusController(settings, reader, askoheat, store, wallbox)
+    shelly = (
+        ShellyClient(settings.shelly_host, settings.shelly_port, settings.shelly_timeout_s)
+        if settings.shelly_host
+        else None
+    )
+    controller = SurplusController(settings, reader, askoheat, store, wallbox, shelly)
 
     worker_thread = threading.Thread(target=controller.run_forever, daemon=True)
     worker_thread.start()

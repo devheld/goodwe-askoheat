@@ -9,6 +9,7 @@ from .askoheat_client import AskoHeatController
 from .config import Settings
 from .database import HistoryStore, Reading
 from .goodwe_client import GoodWeModbusReader
+from .shelly_client import ShellyClient
 from .wallbox_client import STATUS_TEXT, GoodWeWallboxReader
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class SurplusController:
         askoheat: AskoHeatController,
         store: HistoryStore,
         wallbox: GoodWeWallboxReader | None = None,
+        shelly: ShellyClient | None = None,
     ) -> None:
         self._settings = settings
         self._reader = reader
@@ -72,6 +74,14 @@ class SurplusController:
         # end, so the first quiet tick may read the charger straight away
         # instead of leaving the panel blank for the first six minutes.
         self._wallbox_quiet_ticks = settings.wallbox_idle_ticks
+        # The second meter at the connection point. Also read-only and also
+        # never consulted for a heating decision, but unlike the charger it
+        # is read on every tick: it is plain HTTP, it has no session limit
+        # and nothing it does can interrupt anything.
+        self._shelly = shelly
+        # Last snapshot, for _device_health - which reports what the last
+        # poll found rather than asking again.
+        self._shelly_snapshot: dict | None = None
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -152,6 +162,12 @@ class SurplusController:
                 "online": bool(wallbox.get("online")),
                 "error": wallbox.get("error"),
             }
+        if self._shelly is not None:
+            shelly = self._shelly_snapshot or {}
+            health["shelly"] = {
+                "online": bool(shelly.get("online")),
+                "error": shelly.get("error"),
+            }
         return health
 
     def _publish_inverter_failure(self, error: str) -> None:
@@ -169,6 +185,10 @@ class SurplusController:
         # how an unreachable inverter also blanked the wallbox panel, for no
         # reason other than the order of the lines in _tick().
         wallbox = self._poll_wallbox()
+        # The second meter matters most exactly here. It measures the grid
+        # connection point on its own, so with the inverter gone the page
+        # can still say what the house is drawing.
+        shelly = self._poll_shelly()
         empty = dict.fromkeys(
             (
                 "pv_kw",
@@ -196,6 +216,7 @@ class SurplusController:
                     f"answers again, retrying every {self._settings.poll_interval_s}s"
                 ),
                 "wallbox": wallbox,
+                "shelly": shelly,
                 "devices": self._device_health(inverter_error=error),
             }
 
@@ -526,6 +547,10 @@ class SurplusController:
             readings.consumption_kw - max(heater_load_w, 0) / 1000
         )
 
+        # Same deal as the wallbox: dashboard and history only, after the
+        # heating decision, errors swallowed into the payload.
+        shelly = self._poll_shelly()
+
         timestamp = datetime.now(timezone.utc).isoformat()
         reading = Reading(
             timestamp=timestamp,
@@ -545,6 +570,11 @@ class SurplusController:
             wallbox_status_code=(wallbox or {}).get("status_code"),
             wallbox_charging=(wallbox or {}).get("charging"),
             wallbox_energy_kwh=(wallbox or {}).get("total_energy_kwh"),
+            shelly_grid_kw=(shelly or {}).get("grid_kw"),
+            shelly_phase_kw=(shelly or {}).get("phase_kw"),
+            shelly_currents_a=(shelly or {}).get("currents_a"),
+            shelly_import_kwh=(shelly or {}).get("import_kwh"),
+            shelly_export_kwh=(shelly or {}).get("export_kwh"),
         )
         self._store.insert(reading)
         # A suspended poll carries either the previous snapshot or no reading
@@ -552,6 +582,21 @@ class SurplusController:
         # to record it from.
         if wallbox is not None and not wallbox.get("poll_suspended"):
             self._record_wallbox_event(timestamp, wallbox)
+
+        # What the inverter's own four numbers fail to account for: energy in
+        # minus energy out. Measured here at a steady 0.12kW with the battery
+        # idle and no PV - where no conversion happens at all - rising to
+        # 0.18kW while the battery discharges, and flat across the whole
+        # discharge range from 0.5 to 13kW. A conversion loss would scale
+        # with the power; a fixed draw does not. See README section 8.
+        balance_gap_kw = round(
+            readings.pv_kw
+            + readings.battery_discharge_kw
+            - readings.battery_charge_kw
+            - readings.consumption_kw
+            - readings.grid_kw,
+            3,
+        )
 
         with self._lock:
             self._latest = {
@@ -576,7 +621,9 @@ class SurplusController:
                 "askoheat_temp_c": askoheat_temp_c,
                 "status": status,
                 "status_text": status_text,
+                "balance_gap_kw": balance_gap_kw,
                 "wallbox": wallbox,
+                "shelly": shelly,
                 "devices": self._device_health(),
             }
 
@@ -594,6 +641,19 @@ class SurplusController:
             status,
             status_text,
         )
+
+    def _poll_shelly(self) -> dict | None:
+        """Read the second meter, every tick.
+
+        No gate and no slower clock, unlike _poll_wallbox: this is an HTTP
+        GET against a device that is happy to be asked and has nothing to
+        interrupt. The client never raises, so an unreachable meter arrives
+        here as a payload with online=False.
+        """
+        if self._shelly is None:
+            return None
+        self._shelly_snapshot = self._shelly.as_dict()
+        return self._shelly_snapshot
 
     def _poll_wallbox(self, vehicle_load_kw: float | None = None) -> dict | None:
         """Read the charger on its own, slower clock - and not at all while a

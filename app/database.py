@@ -69,6 +69,17 @@ class Reading:
     wallbox_status_code: int | None = None
     wallbox_charging: bool | None = None
     wallbox_energy_kwh: float | None = None
+    # The Shelly 3EM at the connection point, in the same sign convention as
+    # grid_kw above (positive is export). NULL both before it was installed
+    # and whenever it did not answer, so a reader comparing it against
+    # grid_kw has to skip NULLs rather than read them as zero.
+    shelly_grid_kw: float | None = None
+    shelly_phase_kw: tuple[float, float, float] | None = None
+    # RMS per phase - what the main fuse carries, which no other instrument
+    # here measures.
+    shelly_currents_a: tuple[float, float, float] | None = None
+    shelly_import_kwh: float | None = None
+    shelly_export_kwh: float | None = None
 
 
 def period_start(period: str, now: datetime | None = None) -> datetime:
@@ -152,6 +163,15 @@ class HistoryStore:
                 ("wallbox_status_code", "INTEGER"),
                 ("wallbox_charging", "INTEGER"),
                 ("wallbox_energy_kwh", "REAL"),
+                ("shelly_grid_kw", "REAL"),
+                ("shelly_l1_kw", "REAL"),
+                ("shelly_l2_kw", "REAL"),
+                ("shelly_l3_kw", "REAL"),
+                ("shelly_l1_a", "REAL"),
+                ("shelly_l2_a", "REAL"),
+                ("shelly_l3_a", "REAL"),
+                ("shelly_import_kwh", "REAL"),
+                ("shelly_export_kwh", "REAL"),
             ):
                 if column not in existing_columns:
                     conn.execute("ALTER TABLE readings ADD COLUMN " + column + " " + decl)
@@ -186,8 +206,12 @@ class HistoryStore:
                 (timestamp, pv_kw, consumption_kw, battery_charge_kw, battery_discharge_kw,
                  grid_kw, battery_charging, battery_soc_pct, step, heater_load_w,
                  askoheat_temp_c, status, status_text,
-                 wallbox_power_kw, wallbox_status_code, wallbox_charging, wallbox_energy_kwh)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 wallbox_power_kw, wallbox_status_code, wallbox_charging, wallbox_energy_kwh,
+                 shelly_grid_kw, shelly_l1_kw, shelly_l2_kw, shelly_l3_kw,
+                 shelly_l1_a, shelly_l2_a, shelly_l3_a,
+                 shelly_import_kwh, shelly_export_kwh)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     reading.timestamp,
@@ -207,6 +231,11 @@ class HistoryStore:
                     reading.wallbox_status_code,
                     None if reading.wallbox_charging is None else int(reading.wallbox_charging),
                     reading.wallbox_energy_kwh,
+                    reading.shelly_grid_kw,
+                    *(reading.shelly_phase_kw or (None, None, None)),
+                    *(reading.shelly_currents_a or (None, None, None)),
+                    reading.shelly_import_kwh,
+                    reading.shelly_export_kwh,
                 ),
             )
 

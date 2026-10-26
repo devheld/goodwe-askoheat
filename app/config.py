@@ -39,6 +39,14 @@ class Settings:
     wallbox_idle_ticks: int
     wallbox_idle_poll_interval_s: int
 
+    # Shelly 3EM on the three main phases, HTTP and read-only. Optional in
+    # the same way as the charger: empty SHELLY_HOST leaves it out. It is an
+    # independent witness to the grid connection point and the only
+    # instrument here that measures the current through the main fuse.
+    shelly_host: str
+    shelly_port: int
+    shelly_timeout_s: float
+
     step_min: int
     step_max: int
     poll_interval_s: int
@@ -113,6 +121,12 @@ def load_settings() -> Settings:
         wallbox_idle_poll_interval_s=int(
             os.environ.get("WALLBOX_IDLE_POLL_INTERVAL_S", "1200")
         ),
+        shelly_host=os.environ.get("SHELLY_HOST", ""),
+        shelly_port=int(os.environ.get("SHELLY_PORT", "80")),
+        # Short on purpose: this is a dashboard reading on the heating loop's
+        # clock, and a meter that is slow to answer must not hold up the
+        # heater decision behind it.
+        shelly_timeout_s=float(os.environ.get("SHELLY_TIMEOUT_S", "3")),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),
