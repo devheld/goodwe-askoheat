@@ -380,30 +380,49 @@ number.
 before a charge, 88.0 kWh after, with no read in between - so the counter
 sets the scale. It cannot say *when* the energy flowed, because it is only
 ever observed after the fact. That comes from the house load above the
-heater, and each counter increment is spread over the samples since the
-previous increment, weighted by how far the house load stood above the
-span's median.
+heater.
 
 Which samples may have hidden a charge is deliberately not a new threshold.
 It is `WALLBOX_BUSY_LOAD_KW`, the control loop's own definition of "a car is
 drawing" - the number that decides whether the charger may be read at all.
 The two uses are the same statement: where it holds, the charger was not
-read and the counter stood still, so the energy has to be placed by weight;
+read and the counter stood still, so the energy has to be placed by hand;
 where it does not hold, the charger was read and the counter moved on its
 own.
 
-**What it is worth.** On the one charge with both kinds of evidence, 94% of
-9.9 kWh landed in the two hours it actually ran, with a derived peak of
-10.2 kW against 10.4 kW measured on the same car two days earlier. Daily and
-monthly totals are exact, because they are the counter.
+**Where exactly comes from the gate's timing, not from weighting.** The
+first attempt weighted every sample over the threshold anywhere in the span,
+and a span can be 21 hours long - so a 3.5 kW household load three hours
+before the car was plugged in collected 0.53 kWh of charging.
 
-Three things it cannot do. An appliance over the threshold inside the same
-span takes a share it did not earn - nothing here can tell a 3 kW oven from
-a 3 kW car. Charging from before the counter worked (it read a flat 0.0
-until 23 Oct 2026) is absent rather than estimated. And a charge shorter
-than the gap between two reads is placed at the read that saw it, with no
-power attached, because dividing a whole charge by one 70-second sample
-would claim several hundred kW.
+But the gate only reads the charger again once the house has been quiet for
+`WALLBOX_IDLE_TICKS`, which means the read that observes an increment
+follows the last charging sample by that many ticks and no more. Walking
+backwards from the observation and stopping at the first longer quiet run
+therefore finds the charge and nothing before it. On both charges of 26 and
+27 Oct 2026 the quiet tail was five samples long on the nose - the gate's
+own signature in the record.
+
+The walk carries on past a long quiet run while the samples found so far
+still cannot carry the increment, because then the block is incomplete by
+definition. That is what charging before the gate existed looks like: a
+burst every few minutes with pauses the counter was never read in.
+
+**What it is worth.** On the charge with both kinds of evidence, all of the
+9.9 kWh landed in the two hours it ran, and the two days hold two sessions
+where there were two charges. Daily and monthly totals are exact, because
+they are the counter.
+
+Three things it cannot do. An appliance over the threshold *during* the
+charge still takes a share it did not earn - nothing here can tell a 3 kW
+oven from 3 kW of car. Charging from before the counter worked (it read a
+flat 0.0 until 23 Oct 2026) is absent rather than estimated. And a charge
+shorter than the gap between two reads is placed at the read that saw it
+with no power attached, because dividing a whole charge by one 70-second
+sample would claim several hundred kW - which is also why derived power is
+capped at the house load above its own base: where the service was down for
+part of a charge, the surviving samples have to carry the whole increment,
+and the quotient claimed 102 kW from an 11 kW box.
 
 Sessions come from the same series now. They had been built from the
 charger's status flag, which reads "Charging" for a finished car sitting at
@@ -419,6 +438,10 @@ Two lessons worth keeping:
 - **Prefer a counter to an integral wherever one exists.** The integral was
   wrong by 2.5x for days before it was wrong by 100%, and only the second
   kind of wrong was visible.
+- **A reconstruction has to be checked against something that knows.** Every
+  version of this balanced to the counter and looked finished. What found the
+  errors was being told that 12:37 was not a car, and that an 11 kW box
+  cannot deliver 102 kW.
 
 ## Setup
 
