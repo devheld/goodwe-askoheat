@@ -121,6 +121,7 @@ class HistoryStore:
         step_max: int = 7,
         zero_threshold_kw: float = 0.05,
         wallbox_busy_load_kw: float = 3.0,
+        wallbox_idle_ticks: int = 5,
     ) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
@@ -128,10 +129,12 @@ class HistoryStore:
         # computed without them. Prices stay out of here - those are applied
         # one layer up, in the API.
         self._battery_capacity_kwh = battery_capacity_kwh
-        # The control loop's own definition of "a car is drawing", reused
-        # here to decide which samples can have hidden a charge. Same number,
-        # same meaning - see _spread.
+        # The control loop's own definition of "a car is drawing" and its own
+        # delay before it believes a charge is over. Reused here to find the
+        # run of samples that produced a counter increment - same numbers,
+        # same meaning. See _charge_block.
         self._wallbox_busy_load_kw = wallbox_busy_load_kw
+        self._wallbox_idle_ticks = wallbox_idle_ticks
         self._battery_full_soc_pct = battery_full_soc_pct
         self._heating_start_max_temp_c = heating_start_max_temp_c
         self._step_max = step_max
@@ -722,23 +725,66 @@ class HistoryStore:
 
         return series
 
+    def _charge_block(
+        self, span: list[dict], floor: float, needed_kwh: float
+    ) -> list[dict]:
+        """The run of samples that produced one counter increment.
+
+        Found by walking backwards from the read that observed it, because
+        the gate's timing says the charge ended just before that read: the
+        charger is only read again once the house has been quiet for
+        wallbox_idle_ticks, so the observation follows the last charging
+        sample by that many ticks and no more. On both charges of 26 and 27
+        Oct 2026 the quiet tail before the observing read was five samples
+        long on the nose - the gate's own signature, and the reason this can
+        be read backwards at all.
+
+        A sample counts as charging while the house draws at least
+        wallbox_busy_load_kw above the heater, the same test the gate applies
+        live. Short dips stay inside the run: a dip the gate would have sat
+        out cannot have ended the charge, or the charger would have been read
+        and the counter would have moved there instead.
+
+        Keeping the walk this tight is what keeps a kettle out of a charge.
+        Weighting every sample over the threshold anywhere in the span put
+        0.53 kWh on a 3.5 kW household load three hours before the car was
+        even plugged in.
+
+        A longer quiet run only ends the walk once the block can actually
+        carry the increment. If the counter reports more energy than the
+        samples found so far can account for, the block is incomplete by
+        definition and the walk goes on - which is what the charging before
+        the gate existed looks like, a burst every few minutes with pauses
+        between them that the counter did not get read in. Without this the
+        arithmetic still balanced but the derived power did not: a block
+        holding a tenth of its increment claimed 102 kW from an 11 kW box.
+        """
+        block: list[dict] = []
+        covered = 0.0
+        quiet = 0
+        for sample in reversed(span):
+            if sample["house_kw"] >= self._wallbox_busy_load_kw:
+                quiet = 0
+                block.append(sample)
+                covered += (sample["house_kw"] - floor) * sample["hours"]
+            else:
+                quiet += 1
+                if quiet > self._wallbox_idle_ticks and covered >= needed_kwh:
+                    break
+            # hours is the step from the previous sample to this one, capped,
+            # so a capped value means the recording stopped there. Whatever
+            # came before is on the far side of a hole.
+            if sample["hours"] >= MAX_SAMPLE_SPAN_H:
+                break
+        block.reverse()
+        return block
+
     def _spread(self, span: list[dict], delta_kwh: float) -> None:
         """Place one counter increment inside the span it accumulated over.
 
-        Only samples where the house drew at least wallbox_busy_load_kw above
-        the heater can have hidden a charge, and that is not a threshold
-        picked for this: it is the control loop's own definition of "a car is
-        drawing", the one that decides whether the charger may be read at all.
-        Where it holds, the charger was not read, so the counter stood still
-        and the energy has to be placed by weight. Where it does not hold, the
-        charger was read and the counter moved on its own.
-
-        Weight is the load above the span's median, so an hour of charging
-        outranks the hours around it rather than sharing with them. On 27 Oct
-        2026 that put 94% of a 9.9 kWh charge into the two hours it ran, with
-        a derived peak of 10.2 kW against 10.4 kW measured two days earlier on
-        the same car. Weighting every sample above the median instead smeared
-        a sixth of it across the hours the car spent unplugged.
+        Where - which samples - comes from _charge_block. How much of it each
+        of them gets is the load above the span's median, so the busiest part
+        of a charge carries the most of it.
 
         The median rather than the minimum because a car is the exception in
         any span long enough to matter, so the typical sample is the house
@@ -747,34 +793,39 @@ class HistoryStore:
         samples where the subtraction lands near zero, and one of those as the
         floor lifts the whole day over the threshold.
 
-        A larger appliance running inside the same span still takes a share it
-        did not earn. Nothing here can tell a 3 kW oven from a 3 kW car, and
-        the charger is not going to say.
+        An appliance over the threshold inside the charge itself still takes a
+        share it did not earn. Nothing here can tell a 3 kW oven from 3 kW of
+        car, and the charger is not going to say - but it now has to be
+        running during the charge to get anything at all.
         """
         if not span:
             return
         floors = sorted(sample["house_kw"] for sample in span)
         floor = floors[len(floors) // 2]
-        weights = [
-            max(sample["house_kw"] - floor, 0.0) * sample["hours"]
-            if sample["house_kw"] >= self._wallbox_busy_load_kw
-            else 0.0
-            for sample in span
-        ]
+        block = self._charge_block(span, floor, delta_kwh)
+        weights = [max(sample["house_kw"] - floor, 0.0) * sample["hours"] for sample in block]
         total = sum(weights)
         if total <= 0:
-            # Nothing in the span looks like a car: a charge shorter than the
-            # gap between two reads, or a span of a single sample. Put the
+            # Nothing before the read looks like a car: a charge shorter than
+            # the gap between two reads, or a span of a single sample. Put the
             # energy where it was seen rather than nowhere - but leave kw at
             # zero, because dividing a whole charge by one 70s sample would
             # claim a power of several hundred kW.
             span[-1]["kwh"] += delta_kwh
             return
-        for sample, weight in zip(span, weights):
+        for sample, weight in zip(block, weights):
             if weight:
                 sample["kwh"] += delta_kwh * weight / total
-                sample["kw"] = (
-                    sample["kwh"] / sample["hours"] if sample["hours"] else 0.0
+                # The car cannot have drawn more than the house drew above
+                # its own base load, so the quotient is capped there. It
+                # needs to be: where the service was down for part of a
+                # charge, the surviving samples have to carry the whole
+                # increment, and dividing it by them claimed 102 kW from an
+                # 11 kW box. The energy is still placed in full - only the
+                # power stops pretending to be measured.
+                sample["kw"] = min(
+                    sample["kwh"] / sample["hours"] if sample["hours"] else 0.0,
+                    sample["house_kw"] - floor,
                 )
 
     def _wallbox_energy_by_bucket(self, fmt: str, since: datetime) -> dict[str, float]:
