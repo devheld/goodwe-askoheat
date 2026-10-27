@@ -44,6 +44,9 @@ async def lifespan(app: FastAPI):
         heating_start_max_temp_c=settings.heating_start_max_temp_c,
         step_max=settings.step_max,
         zero_threshold_kw=settings.zero_threshold_kw,
+        # Also the rule for which samples can have hidden a charge, since a
+        # charge is exactly what stops the charger being readable.
+        wallbox_busy_load_kw=settings.wallbox_busy_load_kw,
     )
     reader = GoodWeModbusReader(
         settings.goodwe_host,

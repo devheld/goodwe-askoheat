@@ -35,6 +35,11 @@ CURTAILMENT_EXPORT_EPS_KW = 0.05
 # leaves a difference far smaller than the error of the capacity estimate.
 BATTERY_LOSS_MAX_STORED_SHARE = 0.25
 
+# The charger's counter has a resolution of 0.1 kWh, so a reconstructed
+# session below that cannot be a charge it recorded - it is a share the
+# weighting handed to some other appliance. Dropped rather than listed.
+MIN_SESSION_KWH = 0.1
+
 # Aggregation periods offered by /api/energy. fmt is an SQLite strftime
 # pattern applied to the LOCAL timestamp, so buckets line up with the days
 # and months the user lives in rather than with UTC.
@@ -115,6 +120,7 @@ class HistoryStore:
         heating_start_max_temp_c: float = 52.0,
         step_max: int = 7,
         zero_threshold_kw: float = 0.05,
+        wallbox_busy_load_kw: float = 3.0,
     ) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
@@ -122,6 +128,10 @@ class HistoryStore:
         # computed without them. Prices stay out of here - those are applied
         # one layer up, in the API.
         self._battery_capacity_kwh = battery_capacity_kwh
+        # The control loop's own definition of "a car is drawing", reused
+        # here to decide which samples can have hidden a charge. Same number,
+        # same meaning - see _spread.
+        self._wallbox_busy_load_kw = wallbox_busy_load_kw
         self._battery_full_soc_pct = battery_full_soc_pct
         self._heating_start_max_temp_c = heating_start_max_temp_c
         self._step_max = step_max
@@ -304,11 +314,15 @@ class HistoryStore:
     def energy_buckets(self, period: str) -> dict:
         """Energy per bucket, integrated from the recorded power samples.
 
-        There is no energy meter behind this: each sample's power is
+        There is no energy meter behind most of this: each sample's power is
         multiplied by the time since the previous sample. That is accurate to
         within a poll interval as long as the load does not swing wildly
         between two polls, and it is the only option for the AskoHeat and the
         house load, neither of which exposes a counter.
+
+        The charger is the exception - it has a counter and that counter is
+        used instead, because integrating its power samples was wrong in both
+        directions. See _wallbox_series.
         """
         spec = PERIODS.get(period) or PERIODS["today"]
         since = period_start(period)
@@ -322,7 +336,6 @@ class HistoryStore:
                     battery_charge_kw,
                     battery_discharge_kw,
                     COALESCE(heater_load_w, 0) / 1000.0 AS asko_kw,
-                    COALESCE(wallbox_power_kw, 0) AS wallbox_kw,
                     (julianday(timestamp)
                         - julianday(LAG(timestamp) OVER (ORDER BY timestamp))) * 24.0 AS raw_h
                 FROM readings
@@ -340,8 +353,6 @@ class HistoryStore:
                 SUM(battery_charge_kw * h)                             AS battery_charge,
                 SUM(battery_discharge_kw * h)                          AS battery_discharge,
                 SUM(asko_kw * h)                                       AS asko,
-                SUM(wallbox_kw * h)                                    AS wallbox,
-                SUM(MAX(consumption_kw - asko_kw - wallbox_kw, 0) * h) AS other,
                 -- What went into the inverter and never came out of it as
                 -- load, storage or export. Clamped per sample because a
                 -- negative loss is arithmetic noise, not energy appearing.
@@ -377,6 +388,18 @@ class HistoryStore:
             "loss_curtailed",
             "hours",
         )
+        # Not in the SQL above because neither figure comes from the power
+        # samples any more: the charger's energy comes from its own counter,
+        # placed in time by the house load (see _wallbox_series), and the
+        # rest of the house is what is left once the heater and the car are
+        # taken off the measured consumption.
+        wallbox = self._wallbox_energy_by_bucket(spec["fmt"], since)
+        for row in rows:
+            row["wallbox"] = wallbox.get(row["bucket"], 0.0)
+            row["other"] = max(
+                (row["consumption"] or 0.0) - (row["asko"] or 0.0) - row["wallbox"], 0.0
+            )
+
         losses = self._add_losses(spec["fmt"], since, rows)
         totals = {k: round(sum(r[k] or 0.0 for r in rows), 3) for k in keys}
         for row in rows:
@@ -610,46 +633,204 @@ class HistoryStore:
             "curtailment_window_min": round(24 * 60 / CURTAILMENT_SLOTS_PER_DAY),
         }
 
-    def wallbox_sessions(self, since_iso: str, gap_minutes: int = 15) -> list[dict]:
-        """Contiguous charging runs, rebuilt from the recorded samples.
+    def _wallbox_series(self, since_iso: str, fmt: str = "%Y-%m-%d") -> list[dict]:
+        """Per-sample charger energy: how much from its counter, when from the
+        house load.
 
-        A session ends when charging stops or when the samples themselves stop
-        for longer than gap_minutes - otherwise a service restart in the middle
-        of a charge would read as one long session with a hole in it.
+        The charger's recorded power cannot be integrated, and it was a mistake
+        to do it. The box is polled on a slow clock and not at all while a car
+        is drawing (README section 7), so one five-minute snapshot got repeated
+        into every 70s row: across ten days that overstated the energy by a
+        factor of 2.5 against the charger's own counter. Since the poll gate
+        exists the samples read 0 throughout a charge instead, which is how two
+        days of charging came to show up as nothing at all.
+
+        Register 10065 is cumulative and exact - 78.1 kWh before a charge, 88.0
+        kWh after, with no read in between - so the counter sets the scale.
+        What it cannot say is when the energy flowed, because it is only ever
+        observed after the fact. That comes from the only other witness, the
+        house load above the heater: on 27 Oct 2026 it tracked a one-hour
+        charge at 11 kW to within 11% of the counter's 9.9 kWh.
+
+        So each increment is spread over the samples since the previous
+        observation. A span where the counter did not move contributes nothing,
+        which also means charging from before the counter worked (it read a
+        flat 0.0 until 23 Oct 2026) is absent rather than guessed at.
         """
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT timestamp, wallbox_power_kw, wallbox_energy_kwh, wallbox_status_code
+                SELECT timestamp,
+                       strftime(?, timestamp, 'localtime') AS bucket,
+                       MAX(consumption_kw
+                           - MAX(COALESCE(heater_load_w, 0), 0) / 1000.0, 0) AS house_kw,
+                       wallbox_energy_kwh
                 FROM readings
-                WHERE timestamp >= ? AND wallbox_charging = 1
+                WHERE timestamp >= ?
                 ORDER BY timestamp ASC
                 """,
-                (since_iso,),
+                (fmt, since_iso),
             ).fetchall()
 
+        series: list[dict] = []
+        span_start = 0
+        previous_counter: float | None = None
+        previous_ts: datetime | None = None
+
+        for row in rows:
+            ts = datetime.fromisoformat(row["timestamp"])
+            series.append(
+                {
+                    "timestamp": row["timestamp"],
+                    "bucket": row["bucket"],
+                    "house_kw": row["house_kw"] or 0.0,
+                    "hours": (
+                        0.0
+                        if previous_ts is None
+                        else min(
+                            (ts - previous_ts).total_seconds() / 3600.0,
+                            MAX_SAMPLE_SPAN_H,
+                        )
+                    ),
+                    "kwh": 0.0,
+                    "kw": 0.0,
+                }
+            )
+            previous_ts = ts
+
+            counter = row["wallbox_energy_kwh"]
+            if counter is None:
+                continue
+            if previous_counter is None or counter < previous_counter:
+                # First value, or the counter went backwards - a reset, or a
+                # misread. Nothing to attribute either way, so start fresh.
+                previous_counter = counter
+                span_start = len(series)
+                continue
+            if counter == previous_counter:
+                # Not an observation anything can be concluded from. This
+                # column carries the last snapshot on EVERY row, including
+                # all the rows where the charger was deliberately not read,
+                # so an unchanged value does not mean no energy flowed. Only
+                # a change is a fact.
+                continue
+            self._spread(series[span_start:], counter - previous_counter)
+            previous_counter = counter
+            # The increment is accounted for, so whatever the next one covers
+            # happened after this row.
+            span_start = len(series)
+
+        return series
+
+    def _spread(self, span: list[dict], delta_kwh: float) -> None:
+        """Place one counter increment inside the span it accumulated over.
+
+        Only samples where the house drew at least wallbox_busy_load_kw above
+        the heater can have hidden a charge, and that is not a threshold
+        picked for this: it is the control loop's own definition of "a car is
+        drawing", the one that decides whether the charger may be read at all.
+        Where it holds, the charger was not read, so the counter stood still
+        and the energy has to be placed by weight. Where it does not hold, the
+        charger was read and the counter moved on its own.
+
+        Weight is the load above the span's median, so an hour of charging
+        outranks the hours around it rather than sharing with them. On 27 Oct
+        2026 that put 94% of a 9.9 kWh charge into the two hours it ran, with
+        a derived peak of 10.2 kW against 10.4 kW measured two days earlier on
+        the same car. Weighting every sample above the median instead smeared
+        a sixth of it across the hours the car spent unplugged.
+
+        The median rather than the minimum because a car is the exception in
+        any span long enough to matter, so the typical sample is the house
+        without it - and because the minimum is not robust: the heater's load
+        is read a moment after the inverter's, so a step change leaves single
+        samples where the subtraction lands near zero, and one of those as the
+        floor lifts the whole day over the threshold.
+
+        A larger appliance running inside the same span still takes a share it
+        did not earn. Nothing here can tell a 3 kW oven from a 3 kW car, and
+        the charger is not going to say.
+        """
+        if not span:
+            return
+        floors = sorted(sample["house_kw"] for sample in span)
+        floor = floors[len(floors) // 2]
+        weights = [
+            max(sample["house_kw"] - floor, 0.0) * sample["hours"]
+            if sample["house_kw"] >= self._wallbox_busy_load_kw
+            else 0.0
+            for sample in span
+        ]
+        total = sum(weights)
+        if total <= 0:
+            # Nothing in the span looks like a car: a charge shorter than the
+            # gap between two reads, or a span of a single sample. Put the
+            # energy where it was seen rather than nowhere - but leave kw at
+            # zero, because dividing a whole charge by one 70s sample would
+            # claim a power of several hundred kW.
+            span[-1]["kwh"] += delta_kwh
+            return
+        for sample, weight in zip(span, weights):
+            if weight:
+                sample["kwh"] += delta_kwh * weight / total
+                sample["kw"] = (
+                    sample["kwh"] / sample["hours"] if sample["hours"] else 0.0
+                )
+
+    def _wallbox_energy_by_bucket(self, fmt: str, since: datetime) -> dict[str, float]:
+        buckets: dict[str, float] = {}
+        for sample in self._wallbox_series(since.isoformat(), fmt):
+            if sample["kwh"]:
+                buckets[sample["bucket"]] = (
+                    buckets.get(sample["bucket"], 0.0) + sample["kwh"]
+                )
+        return buckets
+
+    def wallbox_sessions(self, since_iso: str, gap_minutes: int = 15) -> list[dict]:
+        """Contiguous charging runs.
+
+        Rebuilt from the counter-scaled series rather than from the charger's
+        own status flag. The flag reads "Charging" for a plugged-in car that
+        has finished and stays there with 0A on every phase, so a one-hour
+        charge on 27 Oct 2026 showed up as a 63-minute session starting two
+        minutes after it ended, carrying 0 kWh. The series puts the energy
+        where the house load was, which is where the car was.
+
+        A session still ends when the samples stop for longer than
+        gap_minutes, so a service restart mid-charge does not read as one long
+        session with a hole in it. peak_kw is derived, not measured: the
+        charger cannot be read while it is delivering anything.
+        """
+        return [
+            session
+            for session in self._sessions(since_iso, gap_minutes)
+            # Below the counter's own resolution it cannot be a charge the
+            # counter saw - it is a share the weighting gave an appliance.
+            if session["energy_kwh"] >= MIN_SESSION_KWH
+        ]
+
+    def _sessions(self, since_iso: str, gap_minutes: int) -> list[dict]:
         sessions: list[dict] = []
         current: dict | None = None
         previous_ts: datetime | None = None
         gap = timedelta(minutes=gap_minutes)
 
-        for row in rows:
-            ts = datetime.fromisoformat(row["timestamp"])
-            power = row["wallbox_power_kw"] or 0.0
+        for sample in self._wallbox_series(since_iso):
+            if not sample["kwh"]:
+                continue
+            ts = datetime.fromisoformat(sample["timestamp"])
             if current is None or previous_ts is None or ts - previous_ts > gap:
                 current = {
-                    "start": row["timestamp"],
-                    "end": row["timestamp"],
+                    "start": sample["timestamp"],
+                    "end": sample["timestamp"],
                     "energy_kwh": 0.0,
-                    "peak_kw": power,
+                    "peak_kw": 0.0,
                     "samples": 0,
                 }
                 sessions.append(current)
-            else:
-                span_h = min((ts - previous_ts).total_seconds() / 3600.0, MAX_SAMPLE_SPAN_H)
-                current["energy_kwh"] += power * span_h
-                current["end"] = row["timestamp"]
-            current["peak_kw"] = max(current["peak_kw"], power)
+            current["end"] = sample["timestamp"]
+            current["energy_kwh"] += sample["kwh"]
+            current["peak_kw"] = max(current["peak_kw"], sample["kw"])
             current["samples"] += 1
             previous_ts = ts
 
