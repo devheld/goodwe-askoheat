@@ -355,6 +355,71 @@ power factors between -0.45 and 0.78. The 25 A main fuse is per phase and
 carries RMS current, so fuse headroom cannot be estimated from active power
 - which is all the inverter offers. The Shelly measures it directly.
 
+### 9. The fix for section 7 broke the energy page
+
+Two days after the poll gate went in, charging stopped appearing on the
+energy page altogether. The car had taken 12.9 kWh across those two days and
+the page showed none of it - it was counted as general household load
+instead.
+
+The cause was the gate working as designed. The page integrated the
+charger's recorded power, and the whole point of the gate is that the
+charger is not read while a car is drawing, so that power now reads 0 for
+the entire duration of a charge. The fix in section 7 and the thing it broke
+are the same mechanism; nothing was wrong with either on its own.
+
+Integrating that power had been wrong before the gate too, in the opposite
+direction. The charger is polled every five minutes and the snapshot is
+repeated into every 70-second row, so each real sample was counted four or
+five times: across ten days that produced 221 kWh against the charger's own
+counter reading of 88 kWh. The page had been overstating EV charging by a
+factor of 2.5 and nobody noticed, because an inflated number looks like a
+number.
+
+**What replaced it.** Register 10065 is cumulative and exact - 78.1 kWh
+before a charge, 88.0 kWh after, with no read in between - so the counter
+sets the scale. It cannot say *when* the energy flowed, because it is only
+ever observed after the fact. That comes from the house load above the
+heater, and each counter increment is spread over the samples since the
+previous increment, weighted by how far the house load stood above the
+span's median.
+
+Which samples may have hidden a charge is deliberately not a new threshold.
+It is `WALLBOX_BUSY_LOAD_KW`, the control loop's own definition of "a car is
+drawing" - the number that decides whether the charger may be read at all.
+The two uses are the same statement: where it holds, the charger was not
+read and the counter stood still, so the energy has to be placed by weight;
+where it does not hold, the charger was read and the counter moved on its
+own.
+
+**What it is worth.** On the one charge with both kinds of evidence, 94% of
+9.9 kWh landed in the two hours it actually ran, with a derived peak of
+10.2 kW against 10.4 kW measured on the same car two days earlier. Daily and
+monthly totals are exact, because they are the counter.
+
+Three things it cannot do. An appliance over the threshold inside the same
+span takes a share it did not earn - nothing here can tell a 3 kW oven from
+a 3 kW car. Charging from before the counter worked (it read a flat 0.0
+until 23 Oct 2026) is absent rather than estimated. And a charge shorter
+than the gap between two reads is placed at the read that saw it, with no
+power attached, because dividing a whole charge by one 70-second sample
+would claim several hundred kW.
+
+Sessions come from the same series now. They had been built from the
+charger's status flag, which reads "Charging" for a finished car sitting at
+0 A on every phase - so the one-hour charge appeared as a 63-minute session
+starting two minutes after it ended, carrying 0 kWh.
+
+Two lessons worth keeping:
+
+- **A fix that removes a measurement breaks everything downstream of it.**
+  The gate was verified against the thing it was built for, that the car
+  charges without interruption, and it does. Nothing checked what else had
+  been reading those samples.
+- **Prefer a counter to an integral wherever one exists.** The integral was
+  wrong by 2.5x for days before it was wrong by 100%, and only the second
+  kind of wrong was visible.
+
 ## Setup
 
 ```
