@@ -303,6 +303,44 @@ power; `direct` only means the counter is observed every five minutes
 instead of once after the charge, which shortens the spans the backward walk
 has to place.
 
+**The re-test, 28 Oct 2026: the fault is unchanged.** What prompted it was a
+different behaviour disappearing on the same day. Until then, a car charging
+with the house battery low pulled the battery along: on 24 Oct at 18:37 the
+house drew 10.15 kW with no sun and 10% state of charge, and the inverter
+charged the battery at 6.07 kW on top, for 15.96 kW across a 25 A
+connection - 23 A per phase, 93% of the fuse. On 71% of that day's
+high-load samples the battery was charging at a mean of 2.76 kW. On 28 Oct
+at 20:54, same 10% charge and no sun, the house drew 11.44 kW and the
+battery stayed at 0.00 kW: 11.60 kW from the grid. Same conditions,
+opposite dispatch, nothing here changed it - which is the nearest thing to
+evidence that something in the charger or its firmware had moved, and the
+reason to read it again.
+
+It had not moved. Three interruptions in eleven minutes, each on the poll
+interval:
+
+    22:36:10-22:37:52  charging   16.1 / 15.7 / 22.0 A   12.6 kW
+    22:38:12           counter 90.6 -> 91.0, so a read   current collapses
+    22:38:12-22:40:52  pause      2.5 / 1.6 / 7.6 A      2:40
+    22:41:12-22:43:33  charging   16.2 / 15.8 / 21.7 A   2:21
+    22:43:53           counter 91.0 -> 91.4, so a read   current collapses
+    22:43:53-22:46:55  pause                             3:02
+    22:47:15-22:48:35  charging   15.2 / 14.9 / 19.1 A   1:20
+    22:48:55           third read due                    current collapses
+
+Interruptions 5:41 and 5:02 apart against a 300 s interval, and two of the
+three coincide with an *observed counter change* - direct evidence that a
+read happened at that moment, rather than an inference from timing as in the
+original measurement. Duty cycle 41%, so worse than the 60% measured on 25
+Oct. The charger reported status 3 and 10.1 kW at the first read while the
+independent meter already showed the collapse.
+
+A by-product worth keeping: with the car at about 16 A per phase, L3 reached
+22.0 A of 25 A, because the standing base load of section 8 sits on that
+phase nearly alone. The highest current this installation has been measured
+at is not a charging car - it is a charging car plus a battery being filled
+from the grid at the same time, at 23 A.
+
 Two lessons worth keeping:
 
 - **The risk was already written down.** The docstring of
