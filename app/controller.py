@@ -685,9 +685,34 @@ class SurplusController:
         So while a car draws, the charger is left alone and the last
         snapshot is reused. The cost is a dashboard panel that freezes
         during a charge; the alternative is a car that charges at 58% duty.
+
+        Both strategies are kept and WALLBOX_POLL_MODE picks one. The above
+        is "gated". In "direct" the charger is read every
+        wallbox_poll_interval_s whatever the house is doing - the behaviour
+        from before the fault was found. That mode exists because the fault
+        is the charger's own: a firmware change can end it, and the only way
+        to find out is to read again and watch whether a charge survives. It
+        is a test, so the default is "gated" and anything unrecognised lands
+        there too.
         """
         if self._wallbox is None:
             return None
+
+        if self._settings.wallbox_poll_mode == "direct":
+            self._wallbox_poll_suspended = False
+            # Leave the gated counter at rest. Switching back is a restart,
+            # and the first tick after it must not start out believing a
+            # charge is already under way.
+            self._wallbox_quiet_ticks = self._settings.wallbox_idle_ticks
+            if self._wallbox_poll_due(self._settings.wallbox_poll_interval_s):
+                self._read_wallbox()
+            if self._wallbox_snapshot is None:
+                return None
+            return {
+                **self._wallbox_snapshot,
+                "poll_suspended": False,
+                "poll_mode": "direct",
+            }
 
         if vehicle_load_kw is None:
             # No fresh reading to judge by, so the inverter is unreachable.
@@ -711,8 +736,16 @@ class SurplusController:
                 # Restarted mid-charge, so there is nothing to reuse. Polling
                 # once just to fill the panel would cut the charge, which is
                 # the whole thing this is avoiding - report the gap instead.
-                return {"poll_suspended": True, "awaiting_first_read": True}
-            return {**self._wallbox_snapshot, "poll_suspended": True}
+                return {
+                    "poll_suspended": True,
+                    "awaiting_first_read": True,
+                    "poll_mode": "gated",
+                }
+            return {
+                **self._wallbox_snapshot,
+                "poll_suspended": True,
+                "poll_mode": "gated",
+            }
 
         # Any car on the cable is read on a slower clock. Parked, there is
         # nothing changing to catch; charging, the load estimate has already
@@ -724,42 +757,65 @@ class SurplusController:
         if last.get("vehicle_connected"):
             interval = max(interval, self._settings.wallbox_idle_poll_interval_s)
 
-        now = time.monotonic()
-        if (
-            self._wallbox_polled_at is None
-            or now - self._wallbox_polled_at >= interval
-        ):
-            self._wallbox_polled_at = now
-            try:
-                self._wallbox_snapshot = self._wallbox.as_dict()
-                # The load threshold cannot see a single-phase car at the 6A
-                # minimum (1.38kW), so where the reading and the estimate
-                # disagree, believe the reading and stop reading.
-                if self._charger_drawing(self._wallbox_snapshot):
-                    self._wallbox_poll_suspended = True
-                    self._wallbox_quiet_ticks = 0
-                    return {**self._wallbox_snapshot, "poll_suspended": True}
-            except Exception as exc:
-                # read() already turns a failure into an offline snapshot, so
-                # reaching here means something unforeseen - a hostname that
-                # stopped resolving, say. The charger is the one device on
-                # this installation that controls nothing, so it is never
-                # worth losing a tick over.
-                logger.exception("Unexpected failure while reading the wallbox")
-                self._wallbox_snapshot = {
-                    "online": False,
-                    "error": str(exc),
-                    "status_code": None,
-                    "status_text": None,
-                    "vehicle_connected": None,
-                    "charging": None,
-                    "power_kw": None,
-                    "total_energy_kwh": None,
-                    "charge_mode": None,
+        if self._wallbox_poll_due(interval):
+            self._read_wallbox()
+            # The load threshold cannot see a single-phase car at the 6A
+            # minimum (1.38kW), so where the reading and the estimate
+            # disagree, believe the reading and stop reading.
+            if self._charger_drawing(self._wallbox_snapshot):
+                self._wallbox_poll_suspended = True
+                self._wallbox_quiet_ticks = 0
+                return {
+                    **self._wallbox_snapshot,
+                    "poll_suspended": True,
+                    "poll_mode": "gated",
                 }
         if self._wallbox_snapshot is None:
             return None
-        return {**self._wallbox_snapshot, "poll_suspended": False}
+        return {
+            **self._wallbox_snapshot,
+            "poll_suspended": False,
+            "poll_mode": "gated",
+        }
+
+    def _wallbox_poll_due(self, interval: float) -> bool:
+        """Has the charger's own clock come round again?
+
+        Claims the slot as a side effect, so a read that then fails waits
+        out the whole interval instead of retrying on the next tick.
+        """
+        now = time.monotonic()
+        if (
+            self._wallbox_polled_at is not None
+            and now - self._wallbox_polled_at < interval
+        ):
+            return False
+        self._wallbox_polled_at = now
+        return True
+
+    def _read_wallbox(self) -> None:
+        """Take one reading and keep it, whatever happens.
+
+        read() already turns a failure into an offline snapshot, so reaching
+        the handler means something unforeseen - a hostname that stopped
+        resolving, say. The charger is the one device on this installation
+        that controls nothing, so it is never worth losing a tick over.
+        """
+        try:
+            self._wallbox_snapshot = self._wallbox.as_dict()
+        except Exception as exc:
+            logger.exception("Unexpected failure while reading the wallbox")
+            self._wallbox_snapshot = {
+                "online": False,
+                "error": str(exc),
+                "status_code": None,
+                "status_text": None,
+                "vehicle_connected": None,
+                "charging": None,
+                "power_kw": None,
+                "total_energy_kwh": None,
+                "charge_mode": None,
+            }
 
     @staticmethod
     def _charger_drawing(snapshot: dict | None) -> bool:

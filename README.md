@@ -286,6 +286,23 @@ against 39% before. Closing that gap entirely would mean lowering
 `WALLBOX_BUSY_LOAD_KW` into the range of ordinary household appliances,
 which would suspend polling for an oven.
 
+**Both strategies are kept, and `WALLBOX_POLL_MODE` picks one.** `gated` is
+the above. `direct` reads the charger every `WALLBOX_POLL_INTERVAL_S`
+whatever the house is doing - the behaviour from before the fault was found.
+The switch exists because the fault is the charger's own, which means a
+firmware change can end it, and the only way to find out is to read again
+and watch whether a charge survives. So `direct` is a test rather than a
+setting to leave on, and the default - along with anything unrecognised - is
+`gated`. The active mode is reported in `/api/live` as `wallbox.poll_mode`
+and named on the dashboard panel, because the difference is whether a charge
+can be cut short.
+
+Energy accounting does not change with the mode. It comes from the charger's
+own counter either way (section 9), never from integrating the reported
+power; `direct` only means the counter is observed every five minutes
+instead of once after the charge, which shortens the spans the backward walk
+has to place.
+
 Two lessons worth keeping:
 
 - **The risk was already written down.** The docstring of

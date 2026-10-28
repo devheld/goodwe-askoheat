@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,13 @@ class Settings:
     wallbox_busy_load_kw: float
     wallbox_idle_ticks: int
     wallbox_idle_poll_interval_s: int
+    # Which of the two reading strategies runs. "gated" leaves the charger
+    # alone while the household load says a car is drawing; "direct" reads
+    # it on the interval whatever the house is doing, which is how this ran
+    # before the fault was found. Kept switchable because the fault is the
+    # charger's own, so a firmware change can end it - and the only way to
+    # find out is to read again and watch whether a charge survives.
+    wallbox_poll_mode: str
 
     # Shelly 3EM on the three main phases, HTTP and read-only. Optional in
     # the same way as the charger: empty SHELLY_HOST leaves it out. It is an
@@ -86,6 +94,26 @@ class Settings:
     db_path: Path
 
 
+WALLBOX_POLL_MODES = ("gated", "direct")
+
+
+def _wallbox_poll_mode() -> str:
+    """Read WALLBOX_POLL_MODE, falling back to the one that protects a charge.
+
+    A typo must not quietly turn the protection off, so anything
+    unrecognised becomes "gated" and says so in the log.
+    """
+    raw = os.environ.get("WALLBOX_POLL_MODE", "gated").strip().lower()
+    if raw in WALLBOX_POLL_MODES:
+        return raw
+    logging.getLogger(__name__).warning(
+        "WALLBOX_POLL_MODE=%r is not one of %s - falling back to 'gated'",
+        raw,
+        ", ".join(WALLBOX_POLL_MODES),
+    )
+    return "gated"
+
+
 def load_settings() -> Settings:
     return Settings(
         goodwe_host=os.environ.get("GOODWE_HOST", "192.168.68.50"),
@@ -121,6 +149,7 @@ def load_settings() -> Settings:
         wallbox_idle_poll_interval_s=int(
             os.environ.get("WALLBOX_IDLE_POLL_INTERVAL_S", "1200")
         ),
+        wallbox_poll_mode=_wallbox_poll_mode(),
         shelly_host=os.environ.get("SHELLY_HOST", ""),
         shelly_port=int(os.environ.get("SHELLY_PORT", "80")),
         # Short on purpose: this is a dashboard reading on the heating loop's

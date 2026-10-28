@@ -183,17 +183,27 @@ function renderWallbox(wb, tariff) {
     return;
   }
 
+  // Which of the two reading strategies is running. Worth naming, because
+  // the difference is whether a charge can be cut short - see
+  // Controller._poll_wallbox and WALLBOX_POLL_MODE.
+  const mode = wb.poll_mode === "direct"
+    ? "Reading mode: direct - the charger is read on its interval whatever the house " +
+      "is doing. On this hardware that can interrupt a charge; it is on to test whether " +
+      "a firmware change has fixed that. "
+    : "Reading mode: gated - the charger is left alone while the household load says " +
+      "a car is drawing. ";
+
   // Reading the charger cuts the charging current on this hardware, so the
   // poll is suspended while a car draws and these values stand still. Say so
   // rather than let the panel look stuck - see Controller._poll_wallbox.
   if (wb.poll_suspended) {
-    note.textContent =
+    note.textContent = mode +
       "A car is charging, so the wallbox is not being read: every Modbus read drops " +
       "the charging current to 0 A for about two minutes on this hardware. The values " +
       "below are the last reading from before the charge started and will refresh once " +
       "it finishes.";
   } else {
-    note.textContent =
+    note.textContent = mode +
       "The wallbox allows only two Modbus sessions and one is normally taken by the " +
       "SEMS cloud, so a reading here can fail when both slots are busy.";
   }
