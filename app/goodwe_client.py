@@ -34,6 +34,15 @@ class Readings:
     # only other instrument that can show that is a clamp meter which may
     # not stay at the connection point. None when the block came up short.
     load_phase_kw: tuple[float, float, float] | None = None
+    # Production per MPPT input - the same four inputs pv_kw sums. Two are
+    # connected on this plant, one roof side each, and this pair is the only
+    # way to see what each side contributes: the inverter keeps no per-input
+    # energy counter, so the split has to be integrated from power.
+    pv_string_kw: tuple[float, float, float, float] | None = None
+    # String voltage, which is what tells "this side makes nothing because
+    # the sun is on the other one" from "this side makes nothing because it
+    # is not wired up". An unused input reads 0.0 V.
+    pv_string_v: tuple[float, float, float, float] | None = None
 
 
 class GoodWeModbusReader:
@@ -180,6 +189,18 @@ class GoodWeModbusReader:
             return v - 0x100000000 if v >= 0x80000000 else v
 
         pv_kw = sum(u32(addr) for addr in (35105, 35109, 35113, 35117)) / 1000
+        # The block is four registers per input from 35103: voltage (0.1V),
+        # current (0.1A), power (u32, W). Measured on this plant at 10:38 on
+        # 30 Oct 2026: PV1 530.1V/1.1A/634W, PV2 655.3V/1.0A/675W, PV3 and
+        # PV4 at 0.0V - so two inputs, with different module counts per
+        # string, which is what the 530 against 655 volts says.
+        pv_string_kw = tuple(
+            round(u32(addr) / 1000, 3) for addr in (35105, 35109, 35113, 35117)
+        )
+        pv_string_v = tuple(
+            round(regs[offset(addr)] / 10, 1)
+            for addr in (35103, 35107, 35111, 35115)
+        )
         consumption_kw = s32(35171) / 1000
         # 35163/35165/35167 are the per-phase load registers of the same
         # block. Their sum matches 35171 to within a watt (2885 against 2886
@@ -217,4 +238,6 @@ class GoodWeModbusReader:
             battery_state=battery_state,
             battery_soc_pct=battery_soc_pct,
             load_phase_kw=load_phase_kw,
+            pv_string_kw=pv_string_kw,
+            pv_string_v=pv_string_v,
         )

@@ -66,6 +66,15 @@ class Settings:
     shelly_port: int
     shelly_timeout_s: float
 
+    # One label per connected MPPT input, in order. How many entries there
+    # are is how many inputs the dashboard shows, because how many are
+    # wired up is a fact about the roof and not something to infer from a
+    # night-time reading of zero. Which roof side an input is on is in no
+    # register either: it has to be read off the daily curve, and the side
+    # that peaks before noon faces east. Until that is settled the default
+    # names claim nothing.
+    pv_string_names: tuple[str, ...]
+
     step_min: int
     step_max: int
     poll_interval_s: int
@@ -125,6 +134,25 @@ def _wallbox_poll_mode() -> str:
     return "gated"
 
 
+PV_STRING_COUNT_DEFAULT = 2
+
+
+def _pv_string_names() -> tuple[str, ...]:
+    """Read PV_STRING_NAMES: one comma-separated label per connected input.
+
+    The count is meaningful, not just the labels - two entries means two
+    inputs are wired up, which is what this plant measures (PV1 and PV2
+    carry voltage, PV3 and PV4 read 0.0V). An empty setting falls back to
+    that count with neutral names, so the dashboard is right about how many
+    sides there are before it is right about what they are called.
+    """
+    given = [n.strip() for n in os.environ.get("PV_STRING_NAMES", "").split(",")]
+    given = [n for n in given if n][:4]
+    if not given:
+        given = ["String %d" % (i + 1) for i in range(PV_STRING_COUNT_DEFAULT)]
+    return tuple(given)
+
+
 def load_settings() -> Settings:
     return Settings(
         goodwe_host=os.environ.get("GOODWE_HOST", "192.168.68.50"),
@@ -173,6 +201,7 @@ def load_settings() -> Settings:
         # clock, and a meter that is slow to answer must not hold up the
         # heater decision behind it.
         shelly_timeout_s=float(os.environ.get("SHELLY_TIMEOUT_S", "3")),
+        pv_string_names=_pv_string_names(),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),

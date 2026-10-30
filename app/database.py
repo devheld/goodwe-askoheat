@@ -105,6 +105,10 @@ class Reading:
     # the record of the phase imbalance continues wherever the Shelly ends
     # up - or if it is gone altogether.
     load_phase_kw: tuple[float, float, float] | None = None
+    # Production per MPPT input, one roof side each on this plant. Stored
+    # because the inverter has no per-input energy counter: the only way to
+    # answer "which side produced how much" is to integrate these.
+    pv_string_kw: tuple[float, float, float, float] | None = None
 
 
 def period_start(period: str, now: datetime | None = None) -> datetime:
@@ -218,6 +222,10 @@ class HistoryStore:
                 ("load_l1_kw", "REAL"),
                 ("load_l2_kw", "REAL"),
                 ("load_l3_kw", "REAL"),
+                ("pv1_kw", "REAL"),
+                ("pv2_kw", "REAL"),
+                ("pv3_kw", "REAL"),
+                ("pv4_kw", "REAL"),
             ):
                 if column not in existing_columns:
                     conn.execute("ALTER TABLE readings ADD COLUMN " + column + " " + decl)
@@ -259,11 +267,13 @@ class HistoryStore:
                  heatpump_kw, heatpump_l1_kw, heatpump_l2_kw, heatpump_l3_kw,
                  heatpump_energy_kwh, load_l1_kw, load_l2_kw, load_l3_kw,
                  wallbox_meter_kw, wallbox_meter_l1_kw, wallbox_meter_l2_kw,
-                 wallbox_meter_l3_kw, wallbox_meter_energy_kwh)
+                 wallbox_meter_l3_kw, wallbox_meter_energy_kwh,
+                 pv1_kw, pv2_kw, pv3_kw, pv4_kw)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?)
                 """,
                 (
                     reading.timestamp,
@@ -295,6 +305,7 @@ class HistoryStore:
                     reading.wallbox_meter_kw,
                     *(reading.wallbox_meter_phase_kw or (None, None, None)),
                     reading.wallbox_meter_energy_kwh,
+                    *(reading.pv_string_kw or (None, None, None, None)),
                 ),
             )
 

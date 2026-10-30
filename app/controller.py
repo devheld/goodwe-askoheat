@@ -193,6 +193,14 @@ class SurplusController:
         empty = dict.fromkeys(
             (
                 "pv_kw",
+                "pv1_kw",
+                "pv2_kw",
+                "pv3_kw",
+                "pv4_kw",
+                "pv1_v",
+                "pv2_v",
+                "pv3_v",
+                "pv4_v",
                 "consumption_kw",
                 "battery_charge_kw",
                 "battery_discharge_kw",
@@ -218,6 +226,9 @@ class SurplusController:
                 ),
                 "wallbox": wallbox,
                 "shelly": shelly,
+                # Configuration, not a measurement: the labels stay even
+                # when there is nothing to label.
+                "pv_string_names": list(self._settings.pv_string_names),
                 "devices": self._device_health(inverter_error=error),
             }
 
@@ -590,6 +601,7 @@ class SurplusController:
             wallbox_meter_phase_kw=at_wallbox.get("phase_kw"),
             wallbox_meter_energy_kwh=at_wallbox.get("import_kwh"),
             load_phase_kw=readings.load_phase_kw,
+            pv_string_kw=readings.pv_string_kw,
         )
         self._store.insert(reading)
         # A suspended poll carries either the previous snapshot or no reading
@@ -637,6 +649,11 @@ class SurplusController:
                 "load_phase_kw": (
                     list(readings.load_phase_kw) if readings.load_phase_kw else None
                 ),
+                # Flat keys rather than a list, and named exactly like the
+                # history columns, so the dashboard reads a live row and a
+                # recorded row the same way.
+                **_pv_string_fields(readings.pv_string_kw, readings.pv_string_v),
+                "pv_string_names": list(self._settings.pv_string_names),
                 "step": self._current_step,
                 "heater_load_w": heater_load_w,
                 "askoheat_temp_c": askoheat_temp_c,
@@ -914,3 +931,20 @@ class SurplusController:
             power_kw=wallbox["power_kw"],
             energy_kwh=wallbox["total_energy_kwh"],
         )
+
+
+def _pv_string_fields(
+    power: tuple[float, float, float, float] | None,
+    voltage: tuple[float, float, float, float] | None,
+) -> dict:
+    """Spread the four MPPT inputs into pv1_kw..pv4_kw and pv1_v..pv4_v.
+
+    The dashboard decides from these which inputs exist at all: an input
+    that has produced nothing all window and reports no voltage is not
+    wired up, which is a fact about the roof and not something to configure.
+    """
+    out: dict = {}
+    for i in range(4):
+        out["pv%d_kw" % (i + 1)] = power[i] if power else None
+        out["pv%d_v" % (i + 1)] = voltage[i] if voltage else None
+    return out

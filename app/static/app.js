@@ -55,6 +55,9 @@ let currentHours = 24;
 // 60 seconds and would otherwise snap back while being read.
 let powerZoom = null;
 let lastHistory = { points: [], hours: 24 };
+// The last live payload, kept because the roof chart needs the input names
+// from it and is redrawn on the history clock, not the live one.
+let lastLatest = {};
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -122,6 +125,60 @@ function renderTiles(containerId, defs, latest) {
     `;
     wrap.appendChild(tile);
   }
+}
+
+// The roof sides get their own row rather than joining the power tiles:
+// their value is only interesting next to each other, and the share of the
+// current total is the number the panel is for.
+function renderRoof(latest) {
+  const title = document.getElementById("roofTitle");
+  const wrap = document.getElementById("tilesRoof");
+  const note = document.getElementById("roofNote");
+  const defs = roofDefs(latest);
+
+  // No per-input data at all: an older service, or an inverter that did not
+  // answer. Hide the row rather than show empty tiles.
+  if (!defs.length || latest[defs[0].key] === undefined) {
+    title.hidden = true;
+    wrap.hidden = true;
+    note.hidden = true;
+    return;
+  }
+  title.hidden = false;
+  wrap.hidden = false;
+  note.hidden = false;
+  wrap.innerHTML = "";
+
+  const total = defs.reduce((sum, d) => sum + (latest[d.key] || 0), 0);
+  for (const def of defs) {
+    const kw = latest[def.key];
+    const volt = latest[def.voltKey];
+    let sub;
+    if (total > 0.01 && kw !== null && kw !== undefined) {
+      // Share of what the roof is making right now, which is the whole
+      // point of splitting it - and it is a share of the two sides, not of
+      // pv_kw, so the two tiles always add up to 100%.
+      sub = `${((kw / total) * 100).toFixed(0)}% of ${fmt(total)} kW`;
+    } else if (volt > 20) {
+      // Voltage without current: the string is alive, the sun is not on it.
+      sub = `${fmt(volt, 0)} V at the input, no production`;
+    } else {
+      sub = "No production";
+    }
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    tile.innerHTML = `
+      <div class="label"><span class="dot" style="background:${cssVar(def.color)}"></span>${def.name}</div>
+      <div class="value">${fmt(kw)} kW</div>
+      <div class="sub">${sub}</div>
+    `;
+    wrap.appendChild(tile);
+  }
+
+  note.textContent =
+    "One MPPT input of the inverter per roof side. The inverter keeps no " +
+    "energy counter per input, so the split over a day has to be read off " +
+    "the chart below: the side that peaks before noon faces east.";
 }
 
 // The wallbox panel is rendered by hand rather than through renderTiles:
@@ -295,7 +352,31 @@ const DEVICE_NAMES = {
   inverter: "Inverter",
   askoheat: "AskoHeat",
   wallbox: "Wallbox",
+  shelly_grid: "Grid meter",
+  shelly_heatpump: "Heat pump meter",
+  shelly_wallbox: "Wallbox meter",
 };
+
+// One colour per roof side, both validated against the chart surface in
+// light and dark mode (scripts/validate_palette.py from the dataviz skill:
+// all five checks pass, worst CVD separation dE 26.5). A third input would
+// need a third validated colour - it is deliberately not generated here,
+// because the two inputs that exist are a fact about the roof and the next
+// hue would be a guess.
+const ROOF_COLORS = ["--series-roof-a", "--series-roof-b"];
+
+// The series for the roof chart and the tiles, one per name the service
+// reports. Keyed exactly like the history columns, so a live row and a
+// recorded row are read the same way.
+function roofDefs(latest) {
+  const names = (latest && latest.pv_string_names) || [];
+  return names.slice(0, ROOF_COLORS.length).map((name, i) => ({
+    key: `pv${i + 1}_kw`,
+    voltKey: `pv${i + 1}_v`,
+    name,
+    color: ROOF_COLORS[i],
+  }));
+}
 
 function deviceLine(latest) {
   if (!latest.devices) {
@@ -313,7 +394,9 @@ async function fetchLive() {
     const res = await fetch("/api/live");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const latest = await res.json();
+    lastLatest = latest;
     renderTiles("tiles", TILE_DEFS, latest);
+    renderRoof(latest);
     renderTiles("tilesAsko", ASKO_TILE_DEFS, latest);
     renderWallbox(latest.wallbox, latest.tariff);
     renderStatusBanner(latest);
@@ -368,6 +451,38 @@ function clampWindow(from, to, lo, hi) {
 // back to the server: /api/history hands over every recorded row for the
 // range, so the detail is already here, and refetching 37k rows on each
 // wheel tick would make the interaction unusable.
+// Its own chart rather than two more lines in the Power chart: that one
+// already carries seven series, and a line chart stops being readable long
+// before nine. The two sides are only interesting against each other
+// anyway.
+function renderRoofChart() {
+  const { points, hours } = lastHistory;
+  const card = document.getElementById("roofChartCard");
+  const defs = roofDefs(lastLatest);
+  if (!defs.length || !points.length || points[0][defs[0].key] === undefined) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  const series = defs.map((def) => ({
+    name: def.name,
+    color: def.color,
+    // Null, not 0, for rows recorded before the per-input columns existed:
+    // a gap is honest, a zero would claim the roof made nothing.
+    points: points.map((p) => ({
+      t: new Date(p.timestamp),
+      v: p[def.key] === null || p[def.key] === undefined ? null : p[def.key],
+    })),
+  }));
+  renderLegend(document.getElementById("roofLegend"), defs);
+  renderLineChart(document.getElementById("roofChartWrap"), series, {
+    hours,
+    height: 180,
+    unit: "kW",
+    yMin: 0,
+  });
+}
+
 function renderPower() {
   const { points, hours } = lastHistory;
   const powerSeries = POWER_SERIES_DEFS.map((def) => ({
@@ -893,6 +1008,7 @@ async function fetchHistory(hours) {
 
     lastHistory = { points, hours };
     renderPower();
+    renderRoofChart();
 
     // Rows from before the battery-priority logic have no SOC - filtered
     // out rather than drawn as 0, which would look like an empty battery.
