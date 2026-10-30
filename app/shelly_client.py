@@ -10,16 +10,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ShellyReading:
-    """One snapshot of the grid connection point.
+    """One snapshot of whatever the clamps are on.
 
-    Everything here is in the project's sign convention, matching
-    Readings.grid_kw: positive is export, negative is import. The device
-    itself reports the opposite - see ShellyClient.
+    The sign follows the role. At the grid connection point everything is in
+    the project's convention, matching Readings.grid_kw: positive is export,
+    negative is import, which is the opposite of what the device reports -
+    see ShellyClient. On a load, where export means nothing, the device's
+    own convention is kept and positive is consumption; a negative reading
+    there means a clamp is on backwards.
     """
 
     online: bool
     error: str | None = None
-    grid_kw: float | None = None
+    role: str = "grid"
+    total_kw: float | None = None
     phase_kw: tuple[float, float, float] | None = None
     currents_a: tuple[float, float, float] | None = None
     voltages_v: tuple[float, float, float] | None = None
@@ -31,12 +35,17 @@ class ShellyReading:
 
 
 class ShellyClient:
-    """A second opinion on the grid connection point.
+    """The one meter here that can be moved to where a question is.
 
-    A Shelly 3EM (SHEM-3, firmware v1.14) with its clamps on the three main
-    phases, read over plain HTTP from /status. No authentication, nothing
-    written, no registers - unlike the charger this device does not mind
-    being asked.
+    A Shelly 3EM (SHEM-3, firmware v1.14) read over plain HTTP from /status.
+    No authentication, nothing written, no registers - unlike the charger
+    this device does not mind being asked.
+
+    Where the clamps sit is a matter of configuration: role "grid" is the
+    three main phases, role "heatpump" the heat pump's feed. The rest of
+    this docstring was written with the clamps at the connection point and
+    describes that role; what carries over to any other is the hardware and
+    the note on the sign.
 
     It exists because the inverter was otherwise the only witness to its own
     numbers, and those numbers do not add up: battery discharge minus house
@@ -69,9 +78,12 @@ class ShellyClient:
     the current is not proportional to the active power.
     """
 
-    def __init__(self, host: str, port: int = 80, timeout: float = 3.0) -> None:
+    def __init__(
+        self, host: str, port: int = 80, timeout: float = 3.0, role: str = "grid"
+    ) -> None:
         self._url = f"http://{host}:{port}/status"
         self._timeout = timeout
+        self._role = role
 
     def read(self) -> ShellyReading:
         """Never raises. A meter that is away is an ordinary condition."""
@@ -80,15 +92,17 @@ class ShellyClient:
                 payload = json.load(resp)
         except Exception as exc:
             logger.warning("Shelly read failed: %s", exc)
-            return ShellyReading(online=False, error=f"{type(exc).__name__}: {exc}")
+            return ShellyReading(
+                online=False, error=f"{type(exc).__name__}: {exc}", role=self._role
+            )
         try:
-            return self._decode(payload)
+            return self._decode(payload, self._role)
         except Exception as exc:
             logger.exception("Shelly returned a payload this cannot read")
-            return ShellyReading(online=False, error=str(exc))
+            return ShellyReading(online=False, error=str(exc), role=self._role)
 
     @staticmethod
-    def _decode(payload: dict) -> ShellyReading:
+    def _decode(payload: dict, role: str = "grid") -> ShellyReading:
         meters = payload.get("emeters") or []
         if len(meters) != 3:
             raise ValueError(f"expected three phases, got {len(meters)}")
@@ -106,10 +120,16 @@ class ShellyClient:
         # firmware that does not report it.
         total_w = float(payload.get("total_power", sum(phase_w)))
 
+        # At the connection point the sign is flipped into the project's
+        # export-positive convention. On a load it is left alone, so that
+        # consumption reads positive and a reversed clamp reads negative.
+        sign = -1 if role == "grid" else 1
+
         return ShellyReading(
             online=True,
-            grid_kw=round(-total_w / 1000, 3),
-            phase_kw=tuple(round(-w / 1000, 3) for w in phase_w),
+            role=role,
+            total_kw=round(sign * total_w / 1000, 3),
+            phase_kw=tuple(round(sign * w / 1000, 3) for w in phase_w),
             currents_a=tuple(round(float(m["current"]), 2) for m in meters),
             voltages_v=tuple(round(float(m["voltage"]), 1) for m in meters),
             power_factors=tuple(round(float(m["pf"]), 2) for m in meters),
@@ -125,7 +145,12 @@ class ShellyClient:
         return {
             "online": r.online,
             "error": r.error,
-            "grid_kw": r.grid_kw,
+            "role": r.role,
+            "total_kw": r.total_kw,
+            # Kept under its old name so that anything still reading grid_kw
+            # gets a grid measurement or nothing at all, never a load
+            # measurement wearing that name.
+            "grid_kw": r.total_kw if r.role == "grid" else None,
             "phase_kw": list(r.phase_kw) if r.phase_kw else None,
             "currents_a": list(r.currents_a) if r.currents_a else None,
             "voltages_v": list(r.voltages_v) if r.voltages_v else None,

@@ -47,13 +47,20 @@ class Settings:
     # find out is to read again and watch whether a charge survives.
     wallbox_poll_mode: str
 
-    # Shelly 3EM on the three main phases, HTTP and read-only. Optional in
-    # the same way as the charger: empty SHELLY_HOST leaves it out. It is an
-    # independent witness to the grid connection point and the only
-    # instrument here that measures the current through the main fuse.
+    # Shelly 3EM, HTTP and read-only. Optional in the same way as the
+    # charger: empty SHELLY_HOST leaves it out.
     shelly_host: str
     shelly_port: int
     shelly_timeout_s: float
+    # Where the clamps are. "grid" is the three main phases, where this is
+    # an independent witness to the connection point and the only
+    # instrument here that measures the current through the main fuse.
+    # "heatpump" is the heat pump's own feed - the largest load in the house
+    # and the one nothing else measures at all. The role decides which
+    # columns a reading goes into, so moving the device ends one series and
+    # starts another instead of changing what the old one means halfway
+    # through. See Reading in database.py.
+    shelly_role: str
 
     step_min: int
     step_max: int
@@ -114,6 +121,26 @@ def _wallbox_poll_mode() -> str:
     return "gated"
 
 
+SHELLY_ROLES = ("grid", "heatpump")
+
+
+def _shelly_role() -> str:
+    """Read SHELLY_ROLE, falling back to where the device started out.
+
+    Same reasoning as _wallbox_poll_mode: a typo must not quietly file the
+    heat pump's consumption away as a measurement of the grid.
+    """
+    raw = os.environ.get("SHELLY_ROLE", "grid").strip().lower()
+    if raw in SHELLY_ROLES:
+        return raw
+    logging.getLogger(__name__).warning(
+        "SHELLY_ROLE=%r is not one of %s - falling back to 'grid'",
+        raw,
+        ", ".join(SHELLY_ROLES),
+    )
+    return "grid"
+
+
 def load_settings() -> Settings:
     return Settings(
         goodwe_host=os.environ.get("GOODWE_HOST", "192.168.68.50"),
@@ -156,6 +183,7 @@ def load_settings() -> Settings:
         # clock, and a meter that is slow to answer must not hold up the
         # heater decision behind it.
         shelly_timeout_s=float(os.environ.get("SHELLY_TIMEOUT_S", "3")),
+        shelly_role=_shelly_role(),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),

@@ -85,6 +85,18 @@ class Reading:
     shelly_currents_a: tuple[float, float, float] | None = None
     shelly_import_kwh: float | None = None
     shelly_export_kwh: float | None = None
+    # The same device after it was moved to the heat pump's feed. Its own
+    # columns, so that a query on the grid columns above can never pick up a
+    # heat pump measurement and both series stay readable across the move.
+    # Consumption is positive here. Which set gets written follows
+    # SHELLY_ROLE - see SurplusController._tick.
+    heatpump_kw: float | None = None
+    heatpump_phase_kw: tuple[float, float, float] | None = None
+    heatpump_energy_kwh: float | None = None
+    # House load per phase, from the inverter rather than from a clamp, so
+    # the record of the phase imbalance continues wherever the Shelly ends
+    # up - or if it is gone altogether.
+    load_phase_kw: tuple[float, float, float] | None = None
 
 
 def period_start(period: str, now: datetime | None = None) -> datetime:
@@ -185,6 +197,14 @@ class HistoryStore:
                 ("shelly_l3_a", "REAL"),
                 ("shelly_import_kwh", "REAL"),
                 ("shelly_export_kwh", "REAL"),
+                ("heatpump_kw", "REAL"),
+                ("heatpump_l1_kw", "REAL"),
+                ("heatpump_l2_kw", "REAL"),
+                ("heatpump_l3_kw", "REAL"),
+                ("heatpump_energy_kwh", "REAL"),
+                ("load_l1_kw", "REAL"),
+                ("load_l2_kw", "REAL"),
+                ("load_l3_kw", "REAL"),
             ):
                 if column not in existing_columns:
                     conn.execute("ALTER TABLE readings ADD COLUMN " + column + " " + decl)
@@ -222,9 +242,12 @@ class HistoryStore:
                  wallbox_power_kw, wallbox_status_code, wallbox_charging, wallbox_energy_kwh,
                  shelly_grid_kw, shelly_l1_kw, shelly_l2_kw, shelly_l3_kw,
                  shelly_l1_a, shelly_l2_a, shelly_l3_a,
-                 shelly_import_kwh, shelly_export_kwh)
+                 shelly_import_kwh, shelly_export_kwh,
+                 heatpump_kw, heatpump_l1_kw, heatpump_l2_kw, heatpump_l3_kw,
+                 heatpump_energy_kwh, load_l1_kw, load_l2_kw, load_l3_kw)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     reading.timestamp,
@@ -249,6 +272,10 @@ class HistoryStore:
                     *(reading.shelly_currents_a or (None, None, None)),
                     reading.shelly_import_kwh,
                     reading.shelly_export_kwh,
+                    reading.heatpump_kw,
+                    *(reading.heatpump_phase_kw or (None, None, None)),
+                    reading.heatpump_energy_kwh,
+                    *(reading.load_phase_kw or (None, None, None)),
                 ),
             )
 

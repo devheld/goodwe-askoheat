@@ -28,6 +28,12 @@ class Readings:
     # controller treats an unknown SOC as "battery not full" (see
     # SurplusController._tick), which keeps the battery's priority.
     battery_soc_pct: float | None
+    # The house load split over the three phases, from the same register
+    # block as consumption_kw and summing to it. Recorded because the
+    # standing base load of this house sits almost entirely on L3, and the
+    # only other instrument that can show that is a clamp meter which may
+    # not stay at the connection point. None when the block came up short.
+    load_phase_kw: tuple[float, float, float] | None = None
 
 
 class GoodWeModbusReader:
@@ -175,6 +181,13 @@ class GoodWeModbusReader:
 
         pv_kw = sum(u32(addr) for addr in (35105, 35109, 35113, 35117)) / 1000
         consumption_kw = s32(35171) / 1000
+        # 35163/35165/35167 are the per-phase load registers of the same
+        # block. Their sum matches 35171 to within a watt (2885 against 2886
+        # when this was checked). Read signed, because a phase can carry a
+        # reverse flow even while the total is positive.
+        load_phase_kw = tuple(
+            round(s32(addr) / 1000, 3) for addr in (35163, 35165, 35167)
+        )
         grid_kw = s32(35139) / 1000
         # Pbattery1 is negative while charging and positive while discharging
         # (opposite of the intuitive convention) - confirmed by comparing
@@ -203,4 +216,5 @@ class GoodWeModbusReader:
             battery_charging=battery_charging,
             battery_state=battery_state,
             battery_soc_pct=battery_soc_pct,
+            load_phase_kw=load_phase_kw,
         )

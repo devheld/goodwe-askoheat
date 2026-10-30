@@ -550,6 +550,12 @@ class SurplusController:
         # Same deal as the wallbox: dashboard and history only, after the
         # heating decision, errors swallowed into the payload.
         shelly = self._poll_shelly()
+        # The clamps measure whatever they are on, so the role decides which
+        # columns the reading goes into. Moving the device ends one series
+        # and starts another, instead of leaving one series that changes
+        # meaning halfway through.
+        at_grid = (shelly or {}) if self._settings.shelly_role == "grid" else {}
+        at_heatpump = (shelly or {}) if self._settings.shelly_role == "heatpump" else {}
 
         timestamp = datetime.now(timezone.utc).isoformat()
         reading = Reading(
@@ -570,11 +576,15 @@ class SurplusController:
             wallbox_status_code=(wallbox or {}).get("status_code"),
             wallbox_charging=(wallbox or {}).get("charging"),
             wallbox_energy_kwh=(wallbox or {}).get("total_energy_kwh"),
-            shelly_grid_kw=(shelly or {}).get("grid_kw"),
-            shelly_phase_kw=(shelly or {}).get("phase_kw"),
-            shelly_currents_a=(shelly or {}).get("currents_a"),
-            shelly_import_kwh=(shelly or {}).get("import_kwh"),
-            shelly_export_kwh=(shelly or {}).get("export_kwh"),
+            shelly_grid_kw=at_grid.get("total_kw"),
+            shelly_phase_kw=at_grid.get("phase_kw"),
+            shelly_currents_a=at_grid.get("currents_a"),
+            shelly_import_kwh=at_grid.get("import_kwh"),
+            shelly_export_kwh=at_grid.get("export_kwh"),
+            heatpump_kw=at_heatpump.get("total_kw"),
+            heatpump_phase_kw=at_heatpump.get("phase_kw"),
+            heatpump_energy_kwh=at_heatpump.get("import_kwh"),
+            load_phase_kw=readings.load_phase_kw,
         )
         self._store.insert(reading)
         # A suspended poll carries either the previous snapshot or no reading

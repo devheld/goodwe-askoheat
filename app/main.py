@@ -74,7 +74,12 @@ async def lifespan(app: FastAPI):
         else None
     )
     shelly = (
-        ShellyClient(settings.shelly_host, settings.shelly_port, settings.shelly_timeout_s)
+        ShellyClient(
+            settings.shelly_host,
+            settings.shelly_port,
+            settings.shelly_timeout_s,
+            settings.shelly_role,
+        )
         if settings.shelly_host
         else None
     )

@@ -77,9 +77,10 @@ while a running one is left to the AskoHeat's own ~65°C cutoff.
 - `app/controller.py` - `SurplusController`: the core control loop - on every
   poll, fetches GoodWe data, decides whether there is surplus, steps the
   AskoHeat up or down, and records the result
-- `app/shelly_client.py` - `ShellyClient`: reads a Shelly 3EM at the grid
-  connection point over HTTP - a second, independent meter, and the only
-  instrument here that measures the RMS current through the main fuse
+- `app/shelly_client.py` - `ShellyClient`: reads a Shelly 3EM over HTTP. At
+  the grid connection point it is a second, independent meter and the only
+  instrument here that measures the RMS current through the main fuse;
+  `SHELLY_ROLE` can move it to the heat pump's feed instead
 - `app/database.py` - `HistoryStore`: SQLite persistence for the dashboard's
   history charts
 - `app/main.py` - FastAPI app serving `/api/live`, `/api/history`, and the
@@ -409,6 +410,26 @@ summing to -15 W the individual phases still carried 1.3, 1.3 and 2.0 A at
 power factors between -0.45 and 0.78. The 25 A main fuse is per phase and
 carries RMS current, so fuse headroom cannot be estimated from active power
 - which is all the inverter offers. The Shelly measures it directly.
+
+**Moving the meter.** The clamp meter is the only instrument here that can
+be put where a question is, and the connection point is not the only
+question in the house: the heat pump is the largest load and nothing
+measures it at all. `SHELLY_ROLE` therefore says where the clamps are,
+`grid` or `heatpump`, and the role decides which columns a reading goes
+into - `shelly_*` or `heatpump_*`. That is the point of the setting: a query
+over the grid columns can never pick up a heat pump measurement, and both
+series stay readable across the move instead of one series changing meaning
+halfway through. In the `heatpump` role the sign is left as the device
+reports it, so consumption is positive and a reversed clamp reads negative.
+
+What the move costs is the per-phase record, because that came from the
+clamps. The inverter has it too, in the block it is already read from:
+`35163/35165/35167` carry the load per phase and sum to `35171` within a
+watt. They are now recorded as `load_l1_kw`/`load_l2_kw`/`load_l3_kw` on
+every row, wherever the Shelly is, so the imbalance above keeps being
+written down with or without a clamp at the connection point. What does not
+carry over is the current: active power per phase is not fuse headroom, for
+the reason just given.
 
 ### 9. The fix for section 7 broke the energy page
 
