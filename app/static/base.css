@@ -1,0 +1,283 @@
+/* The pieces every live page is built from: the colour tokens, the page
+   frame, tiles, chart cards. Extracted from index.html when the AskoHeat
+   and the wallbox moved onto pages of their own - three copies of this
+   would have drifted apart within a week.
+
+   The energy page keeps its own tokens (--e-*): it names energy entities,
+   not measurement series, and the two sets do not overlap. */
+
+:root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-page:   #f9f9f7;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #898781;
+  --gridline:       #e1e0d9;
+  --baseline:       #c3c2b7;
+  --border:         rgba(11,11,11,0.10);
+  --success:        #006300;
+  --status-warning: #fab219; /* fixed status color, not themed */
+  --status-error:   #d03b3b; /* fixed status color, not themed */
+
+  --series-pv:              #2a78d6; /* blue, slot 1 */
+  --series-cons:            #eb6834; /* orange, slot 2 */
+  --series-batt-charge:     #1baf7a; /* aqua, slot 3 */
+  --series-soc:             #0f8a93; /* teal, battery charge level */
+  --series-wallbox:         #7a3fb5; /* purple, wallbox */
+  --series-batt-discharge:  #eda100; /* yellow, slot 4 */
+  --series-grid:            #e87ba4; /* magenta, slot 5 - grid import */
+  --series-grid-export:     #008300; /* green, slot 6 - grid export */
+  --series-temp:            #008300; /* green, slot 6 */
+  --series-load:            #4a3aa7; /* violet, slot 7 */
+  --series-step:            #2a78d6; /* blue (single series) */
+  --series-roof-a:          #2a78d6; /* roof sides, validated pair */
+  --series-roof-b:          #b06a00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --surface-page:   #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --success:        #0ca30c;
+    --status-warning: #fab219;
+    --status-error:   #d03b3b;
+
+    --series-pv:              #3987e5;
+    --series-cons:            #d95926;
+    --series-batt-charge:     #199e70;
+    --series-soc:             #2fb3bd;
+    --series-wallbox:         #b07de0;
+    --series-batt-discharge:  #c98500;
+    --series-grid:            #d55181;
+    --series-grid-export:     #008300;
+    --series-temp:            #008300;
+    --series-load:            #9085e9;
+    --series-step:            #3987e5;
+    --series-roof-a:          #3987e5;
+    --series-roof-b:          #c47a10;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1:      #1a1a19;
+  --surface-page:   #0d0d0d;
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #898781;
+  --gridline:       #2c2c2a;
+  --baseline:       #383835;
+  --border:         rgba(255,255,255,0.10);
+  --success:        #0ca30c;
+  --status-warning: #fab219;
+  --status-error:   #d03b3b;
+
+  --series-pv:              #3987e5;
+  --series-cons:            #d95926;
+  --series-batt-charge:     #199e70;
+  --series-soc:             #2fb3bd;
+  --series-wallbox:         #b07de0;
+  --series-batt-discharge:  #c98500;
+  --series-grid:            #d55181;
+  --series-grid-export:     #008300;
+  --series-temp:            #008300;
+  --series-load:            #9085e9;
+  --series-step:            #3987e5;
+  --series-roof-a:          #3987e5;
+  --series-roof-b:          #c47a10;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--surface-page);
+  color: var(--text-primary);
+}
+
+main {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.subtitle {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 0 0 20px;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 4px 0 8px;
+  color: var(--text-secondary);
+}
+
+.note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: -12px 0 20px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.tile {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.tile .label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.tile .value {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tile .sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.tile .sub.warning { color: var(--status-warning); }
+.tile .sub.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.tile .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.range-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.range-row button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.range-row button:hover {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+}
+.range-row button:active { transform: scale(0.95); }
+.range-row button[aria-pressed="true"] {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+  font-weight: 600;
+}
+
+.zoom-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.zoom-bar button {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.zoom-bar button:hover { color: var(--text-primary); border-color: var(--text-primary); }
+/* An author `display` beats the browser's own `[hidden] { display: none }`,
+   so hiding the bar from JavaScript needs this rule to actually hide it. */
+.zoom-bar[hidden] { display: none; }
+.zoom-hint { font-size: 11px; color: var(--text-muted); margin: 0 0 8px; }
+
+.chart-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.chart-card h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+svg.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.empty-state {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 24px 0;
+  text-align: center;
+}
+
+.footer-note {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 8px;
+}

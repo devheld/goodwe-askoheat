@@ -59,6 +59,19 @@ let lastHistory = { points: [], hours: 24 };
 // from it and is redrawn on the history clock, not the live one.
 let lastLatest = {};
 
+// One script, three pages: the dashboard, the AskoHeat page and the
+// wallbox page all load this file and each one has only the containers for
+// what it shows. So a renderer whose element is not on this page does
+// nothing instead of throwing - which is why every one of them starts with
+// a lookup that is allowed to come back empty.
+function el(id) {
+  return document.getElementById(id);
+}
+
+function setHidden(node, hidden) {
+  if (node) node.hidden = hidden;
+}
+
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
@@ -69,7 +82,8 @@ function fmt(value, digits = 2) {
 }
 
 function renderTiles(containerId, defs, latest) {
-  const wrap = document.getElementById(containerId);
+  const wrap = el(containerId);
+  if (!wrap) return;
   wrap.innerHTML = "";
   for (const def of defs) {
     const tile = document.createElement("div");
@@ -131,22 +145,23 @@ function renderTiles(containerId, defs, latest) {
 // their value is only interesting next to each other, and the share of the
 // current total is the number the panel is for.
 function renderRoof(latest) {
-  const title = document.getElementById("roofTitle");
-  const wrap = document.getElementById("tilesRoof");
-  const note = document.getElementById("roofNote");
+  const title = el("roofTitle");
+  const wrap = el("tilesRoof");
+  const note = el("roofNote");
+  if (!wrap) return;
   const defs = roofDefs(latest);
 
   // No per-input data at all: an older service, or an inverter that did not
   // answer. Hide the row rather than show empty tiles.
   if (!defs.length || latest[defs[0].key] === undefined) {
-    title.hidden = true;
-    wrap.hidden = true;
-    note.hidden = true;
+    setHidden(title, true);
+    setHidden(wrap, true);
+    setHidden(note, true);
     return;
   }
-  title.hidden = false;
-  wrap.hidden = false;
-  note.hidden = false;
+  setHidden(title, false);
+  setHidden(wrap, false);
+  setHidden(note, false);
   wrap.innerHTML = "";
 
   const total = defs.reduce((sum, d) => sum + (latest[d.key] || 0), 0);
@@ -186,21 +201,24 @@ function renderRoof(latest) {
 // a raw-register map, an offline state) that the generic tile renderer has
 // no reason to learn about.
 function renderWallbox(wb, tariff) {
-  const title = document.getElementById("wallboxTitle");
-  const wrap = document.getElementById("tilesWallbox");
-  const note = document.getElementById("wallboxNote");
+  // The heading is optional: on the wallbox page the page title is the
+  // heading, on a page that lists several sections it is a section title.
+  const title = el("wallboxTitle");
+  const wrap = el("tilesWallbox");
+  const note = el("wallboxNote");
+  if (!wrap) return;
 
   // No wallbox configured at all - hide the whole section rather than show
   // an empty one.
   if (!wb) {
-    title.hidden = true;
-    wrap.hidden = true;
-    note.hidden = true;
+    setHidden(title, true);
+    setHidden(wrap, true);
+    setHidden(note, true);
     return;
   }
-  title.hidden = false;
-  wrap.hidden = false;
-  note.hidden = false;
+  setHidden(title, false);
+  setHidden(wrap, false);
+  setHidden(note, false);
   wrap.innerHTML = "";
 
   // Restarted while a car was charging, so there is no snapshot to show and
@@ -326,8 +344,9 @@ const GOOD_STATUSES = new Set(["increasing", "max", "balanced"]);
 const WARNING_STATUSES = new Set(["capped", "warm"]);
 
 function renderStatusBanner(latest) {
-  const banner = document.getElementById("statusBanner");
-  const text = document.getElementById("statusBannerText");
+  const banner = el("statusBanner");
+  const text = el("statusBannerText");
+  if (!banner || !text) return;
   banner.classList.remove("status-good", "status-warning", "status-error");
   if (!latest.status_text) {
     text.textContent = "No status available yet";
@@ -389,6 +408,11 @@ function deviceLine(latest) {
   return `Live data - no answer from ${missing.join(", ")}`;
 }
 
+function setText(id, value) {
+  const node = el(id);
+  if (node) node.textContent = value;
+}
+
 async function fetchLive() {
   try {
     const res = await fetch("/api/live");
@@ -400,13 +424,13 @@ async function fetchLive() {
     renderTiles("tilesAsko", ASKO_TILE_DEFS, latest);
     renderWallbox(latest.wallbox, latest.tariff);
     renderStatusBanner(latest);
-    document.getElementById("statusLine").textContent = deviceLine(latest);
-    document.getElementById("lastUpdate").textContent = new Date(latest.timestamp).toLocaleString("en-GB");
+    setText("statusLine", deviceLine(latest));
+    setText("lastUpdate", new Date(latest.timestamp).toLocaleString("en-GB"));
     if (latest.poll_interval_s !== undefined) {
-      document.getElementById("updateInterval").textContent = latest.poll_interval_s;
+      setText("updateInterval", latest.poll_interval_s);
     }
   } catch (err) {
-    document.getElementById("statusLine").textContent = "No live data available (" + err.message + ")";
+    setText("statusLine", "No live data available (" + err.message + ")");
   }
 }
 
@@ -457,7 +481,8 @@ function clampWindow(from, to, lo, hi) {
 // anyway.
 function renderRoofChart() {
   const { points, hours } = lastHistory;
-  const card = document.getElementById("roofChartCard");
+  const card = el("roofChartCard");
+  if (!card) return;
   const defs = roofDefs(lastLatest);
   if (!defs.length || !points.length || points[0][defs[0].key] === undefined) {
     card.hidden = true;
@@ -474,8 +499,8 @@ function renderRoofChart() {
       v: p[def.key] === null || p[def.key] === undefined ? null : p[def.key],
     })),
   }));
-  renderLegend(document.getElementById("roofLegend"), defs);
-  renderLineChart(document.getElementById("roofChartWrap"), series, {
+  renderLegend(el("roofLegend"), defs);
+  renderLineChart(el("roofChartWrap"), series, {
     hours,
     height: 180,
     unit: "kW",
@@ -484,6 +509,7 @@ function renderRoofChart() {
 }
 
 function renderPower() {
+  if (!el("powerChartWrap")) return;
   const { points, hours } = lastHistory;
   const powerSeries = POWER_SERIES_DEFS.map((def) => ({
     name: def.name,
@@ -493,8 +519,8 @@ function renderPower() {
       v: def.value ? def.value(p) : p[def.key],
     })),
   }));
-  renderLegend(document.getElementById("powerLegend"), POWER_SERIES_DEFS);
-  renderLineChart(document.getElementById("powerChartWrap"), powerSeries, {
+  renderLegend(el("powerLegend"), POWER_SERIES_DEFS);
+  renderLineChart(el("powerChartWrap"), powerSeries, {
     hours,
     unit: "kW",
     yMin: 0,
@@ -508,8 +534,9 @@ function renderPower() {
 }
 
 function renderPowerZoomBar() {
-  const bar = document.getElementById("powerZoomBar");
-  const label = document.getElementById("powerZoomLabel");
+  const bar = el("powerZoomBar");
+  const label = el("powerZoomLabel");
+  if (!bar || !label) return;
   if (!bar || !label) return;
   if (!powerZoom) {
     bar.hidden = true;
@@ -999,6 +1026,27 @@ function renderLegend(container, defs) {
     .join("");
 }
 
+function renderWallboxChart(points, hours) {
+  const wrap = el("wallboxChartWrap");
+  if (!wrap) return;
+  const series = [
+    {
+      name: "Charging Power",
+      color: "--series-wallbox",
+      // Null stays null: a poll the charger did not answer is a gap, and
+      // drawing it as 0 would claim the car was plugged in and idle.
+      points: points.map((p) => ({
+        t: new Date(p.timestamp),
+        v:
+          p.wallbox_power_kw === null || p.wallbox_power_kw === undefined
+            ? null
+            : p.wallbox_power_kw,
+      })),
+    },
+  ];
+  renderLineChart(wrap, series, { hours, height: 200, unit: "kW", yMin: 0 });
+}
+
 async function fetchHistory(hours) {
   try {
     const res = await fetch(`/api/history?hours=${hours}`);
@@ -1009,6 +1057,7 @@ async function fetchHistory(hours) {
     lastHistory = { points, hours };
     renderPower();
     renderRoofChart();
+    renderWallboxChart(points, hours);
 
     // Rows from before the battery-priority logic have no SOC - filtered
     // out rather than drawn as 0, which would look like an empty battery.
@@ -1021,7 +1070,7 @@ async function fetchHistory(hours) {
           .map((p) => ({ t: new Date(p.timestamp), v: p.battery_soc_pct })),
       },
     ];
-    renderLineChart(document.getElementById("socChartWrap"), socSeries, {
+    renderChart("socChartWrap", socSeries, {
       hours,
       height: 140,
       unit: "%",
@@ -1038,7 +1087,7 @@ async function fetchHistory(hours) {
         points: points.map((p) => ({ t: new Date(p.timestamp), v: p.step })),
       },
     ];
-    renderLineChart(document.getElementById("stepChartWrap"), stepSeries, {
+    renderChart("stepChartWrap", stepSeries, {
       hours,
       stepped: true,
       height: 140,
@@ -1056,7 +1105,7 @@ async function fetchHistory(hours) {
         points: points.map((p) => ({ t: new Date(p.timestamp), v: p.heater_load_w })),
       },
     ];
-    renderLineChart(document.getElementById("loadChartWrap"), loadSeries, {
+    renderChart("loadChartWrap", loadSeries, {
       hours,
       height: 140,
       unit: "W",
@@ -1072,8 +1121,10 @@ async function fetchHistory(hours) {
       status: p.status,
       status_text: p.status_text,
     }));
-    renderLegend(document.getElementById("statusLegend"), STATUS_LEGEND_DEFS);
-    renderStatusTimeline(document.getElementById("statusTimelineWrap"), statusPoints, { hours });
+    if (el("statusTimelineWrap")) {
+      renderLegend(el("statusLegend"), STATUS_LEGEND_DEFS);
+      renderStatusTimeline(el("statusTimelineWrap"), statusPoints, { hours });
+    }
 
     const tempSeries = [
       {
@@ -1084,7 +1135,7 @@ async function fetchHistory(hours) {
           .map((p) => ({ t: new Date(p.timestamp), v: p.askoheat_temp_c })),
       },
     ];
-    renderLineChart(document.getElementById("tempChartWrap"), tempSeries, {
+    renderChart("tempChartWrap", tempSeries, {
       hours,
       height: 140,
       unit: "°C",
@@ -1094,16 +1145,29 @@ async function fetchHistory(hours) {
       refLine: { value: ASKOHEAT_MAX_TEMP_C, label: `Device limit ${ASKOHEAT_MAX_TEMP_C}°C` },
     });
   } catch (err) {
-    document.getElementById("powerChartWrap").innerHTML = `<div class="empty-state">Failed to load history (${err.message})</div>`;
-    document.getElementById("socChartWrap").innerHTML = "";
-    document.getElementById("stepChartWrap").innerHTML = "";
-    document.getElementById("loadChartWrap").innerHTML = "";
-    document.getElementById("tempChartWrap").innerHTML = "";
+    // The failure is reported in the first chart this page actually has,
+    // and the rest are emptied: a page showing yesterday's curve under a
+    // failed fetch is worse than an empty one.
+    const wraps = [
+      "powerChartWrap", "wallboxChartWrap", "stepChartWrap",
+      "socChartWrap", "loadChartWrap", "tempChartWrap",
+    ].map(el).filter(Boolean);
+    for (const [i, wrap] of wraps.entries()) {
+      wrap.innerHTML = i === 0
+        ? `<div class="empty-state">Failed to load history (${err.message})</div>`
+        : "";
+    }
   }
 }
 
+// Draws into the container if this page has it, and says nothing if not.
+function renderChart(id, series, opts) {
+  const wrap = el(id);
+  if (wrap) renderLineChart(wrap, series, opts);
+}
+
 function setupRangeButtons() {
-  const zoomReset = document.getElementById("powerZoomReset");
+  const zoomReset = el("powerZoomReset");
   if (zoomReset) {
     zoomReset.addEventListener("click", () => {
       powerZoom = null;
@@ -1111,7 +1175,8 @@ function setupRangeButtons() {
     });
   }
 
-  const row = document.getElementById("rangeRow");
+  const row = el("rangeRow");
+  if (!row) return;
   row.addEventListener("click", (evt) => {
     const btn = evt.target.closest("button[data-hours]");
     if (!btn) return;

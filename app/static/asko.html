@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AskoHeat - AskoHeat Manager</title>
+<link rel="stylesheet" href="/static/base.css?v=1" />
+<link rel="stylesheet" href="/static/nav.css?v=1" />
+</head>
+<body>
+<main>
+  <nav data-nav></nav>
+  <h1>AskoHeat</h1>
+  <p class="subtitle" id="statusLine">Loading data...</p>
+
+  <section class="tiles" id="tilesAsko"></section>
+
+  <div class="range-row" id="rangeRow">
+    <button data-hours="1">1h</button>
+    <button data-hours="6">6h</button>
+    <button data-hours="24" aria-pressed="true">24h</button>
+    <button data-hours="168">7d</button>
+    <button data-hours="720">30d</button>
+  </div>
+
+  <div class="chart-card">
+    <h2>Step (Target)</h2>
+    <p class="zoom-hint">
+      The step the controller commanded, 0 to 7. What the heater actually
+      drew is the chart below - the two differ whenever the tank is at its
+      limit.
+    </p>
+    <div id="stepChartWrap"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>Load (Actual)</h2>
+    <div id="loadChartWrap"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>Status</h2>
+    <div class="legend" id="statusLegend"></div>
+    <div id="statusTimelineWrap"></div>
+  </div>
+
+  <div class="chart-card">
+    <h2>Temperature</h2>
+    <div id="tempChartWrap"></div>
+  </div>
+
+  <p class="footer-note">As of: <span id="lastUpdate">-</span> · updates every <span id="updateInterval">-</span>s</p>
+</main>
+<script src="/static/nav.js?v=1"></script>
+<script src="/static/app.js?v=17"></script>
+</body>
+</html>

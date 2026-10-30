@@ -129,6 +129,19 @@ async def energy_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "energy.html")
 
 
+# The heater and the charger have a page each rather than three screens of
+# tiles on the dashboard. All of them read the same two endpoints; which
+# charts a page draws is decided by the containers in its HTML.
+@app.get("/asko")
+async def asko_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "asko.html")
+
+
+@app.get("/wallbox")
+async def wallbox_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "wallbox.html")
+
+
 def _tariff() -> dict:
     return {
         "currency": "CHF",
