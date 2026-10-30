@@ -656,6 +656,46 @@ cycle, 4.9kWh with the heater at its last step, 4.3kWh while the heater still
 had steps left - and 0.1kWh with a cold tank and the heater off, which is the
 only case the loop could have prevented and did not.
 
+## Which roof side produces what
+
+The inverter reports each MPPT input separately - four registers per input
+from 35103: voltage, current, and power as a 32-bit word. `pv_kw` sums the
+four, and for a long time that sum was all this kept, which threw away the
+one thing the registers can say about the roof.
+
+Two inputs are wired up here, one roof side each. Measured at 10:38 on 30
+Oct 2026:
+
+    PV1   530.1 V   1.1 A   634 W
+    PV2   655.3 V   1.0 A   675 W
+    PV3     0.0 V   0.0 A     0 W
+    PV4     0.0 V   0.0 A     0 W
+
+The two string voltages differ by a quarter, which is the module count
+differing by a quarter: the sides are not the same size. The currents are
+almost equal, so each string is a single series run.
+
+**Which input is on which side is in no register.** It has to be read off
+the daily curve, and the curve says it plainly: the side that peaks before
+solar noon faces east, the one that peaks after it faces west. Two sides
+that peak together are both facing south, differing only in pitch. That is
+why the labels come from `PV_STRING_NAMES` rather than from the code, and
+why they default to naming nothing. The number of entries in that setting
+is also how many inputs the dashboard shows - how many are wired up is a
+fact about the roof, not something to infer from a night-time reading of
+zero.
+
+An early reading, before a full day was recorded: at 10:46 PV1 made 769 W
+from the shorter string and PV2 733 W from the longer one, which is about
+30% more per module on PV1 in the late morning. That points at PV1 being
+the more easterly side, but it is one sample on one morning - the day's
+curve is the measurement.
+
+The inverter keeps **no energy counter per input**, only per plant, so
+"which side produced how much today" cannot be read off a register. It has
+to be integrated from the recorded power, which is why `pv1_kw..pv4_kw` are
+columns in the history rather than only numbers on the dashboard.
+
 ## Known limitations
 
 - Local Modbus/TCP is not enabled on a GoodWe data logger by default and
