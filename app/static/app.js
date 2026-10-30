@@ -8,10 +8,11 @@ const TILE_DEFS = [
   { key: "grid_export_kw", label: "Grid Export", unit: "kW", color: "--series-grid-export" },
 ];
 
+// These three live on the AskoHeat page, which is already called AskoHeat.
 const ASKO_TILE_DEFS = [
-  { key: "step", label: "AskoHeat Step (Target)", unit: "/7", color: "--series-step" },
-  { key: "heater_load_w", label: "AskoHeat Load (Actual)", unit: "W", color: "--series-load" },
-  { key: "askoheat_temp_c", label: "AskoHeat Temperature", unit: "°C", color: "--series-temp" },
+  { key: "step", label: "Step (Target)", unit: "/7", color: "--series-step" },
+  { key: "heater_load_w", label: "Load (Actual)", unit: "W", color: "--series-load" },
+  { key: "askoheat_temp_c", label: "Temperature", unit: "°C", color: "--series-temp" },
 ];
 
 // SOC the battery has to reach before any surplus is used for heating -
