@@ -18,29 +18,33 @@ const NAV_ITEMS = [
     href: "/asko",
     label: "AskoHeat",
     accent: "--nav-asko",
-    // The tank, the water in it, and the element hanging into it.
-    icon: `<rect x="5.6" y="4.4" width="12.8" height="15.4" rx="4"/>
-           <path d="M8.3 15.1c1.2-1.1 2.4-1.1 3.6 0s2.4 1.1 3.6 0"/>
-           <path d="M12 4.4v6.6"/><path d="M10.2 11h3.6"/>`,
+    // A thermometer: the tank-with-element drawing turned into a face at
+    // 20px, and temperature is the number this page is mostly about.
+    icon: `<path d="M14 13.7V6.3a2 2 0 1 0-4 0v7.4a4 4 0 1 0 4 0z"/>
+           <path d="M12 8.6v6"/>
+           <circle cx="12" cy="16.8" r="1.9" fill="currentColor" stroke="none"/>
+           <path d="M15.8 8.4h-1.9"/><path d="M15.8 11h-1.9"/>`,
   },
   {
     href: "/wallbox",
     label: "Wallbox",
     accent: "--nav-wallbox",
     // The box on the wall, the cable hanging off it, the bolt on its face.
-    icon: `<rect x="3.6" y="3.4" width="9" height="17.2" rx="2.6"/>
-           <path d="M6.1 7.2h4"/>
-           <path d="M12.6 17.4c3 0 4.4-1.1 4.4-3.3V8.9"/>
-           <rect x="15.4" y="5.2" width="3.4" height="3.6" rx="1.2"/>
-           <path d="M9.4 10.6 7.4 14.3h2.1l-.5 2.6 2.2-3.8H9.1z" fill="currentColor" stroke="none"/>`,
+    icon: `<rect x="3.8" y="3.2" width="8.6" height="17.4" rx="2.4"/>
+           <path d="M6.2 6.8h3.8"/>
+           <path d="M9.7 10.3 7.7 14h2.1l-.5 2.6 2.2-3.8H9.4z" fill="currentColor" stroke="none"/>
+           <path d="M12.4 10.6c3.2 0 4.8 1.3 4.8 3.5v1.3"/>
+           <rect x="15.6" y="15.6" width="3.2" height="3.6" rx="1.2"/>`,
   },
   {
     href: "/energy",
     label: "Energy",
     accent: "--nav-energy",
     // Three bars on a baseline: what the page is made of.
-    icon: `<path d="M4 19.6h16"/><path d="M7.4 19.6v-4.4"/>
-           <path d="M12 19.6v-8.2"/><path d="M16.6 19.6v-11.4"/>`,
+    icon: `<path d="M3.8 19.8h16.4"/>
+           <path d="M7.6 19.8v-4.9" stroke-width="2.1"/>
+           <path d="M12 19.8v-8.8" stroke-width="2.1"/>
+           <path d="M16.4 19.8v-12.3" stroke-width="2.1"/>`,
   },
 ];
 
