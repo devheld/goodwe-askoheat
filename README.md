@@ -85,7 +85,18 @@ while a running one is left to the AskoHeat's own ~65°C cutoff.
 - `app/database.py` - `HistoryStore`: SQLite persistence for the dashboard's
   history charts
 - `app/main.py` - FastAPI app serving `/api/live`, `/api/history`, and the
-  static dashboard in `app/static/`
+  four static pages in `app/static/`
+
+The pages are `/` (the house: power, roof sides, battery), `/asko`, `/wallbox`
+and `/energy`. The first three are one script, `app/static/app.js`: they read
+the same two endpoints and what a page draws is decided by which containers
+its HTML has, so every renderer tolerates its own absence rather than
+throwing on a missing element. `base.css` holds the tokens and the shared
+components; `nav.js` and `nav.css` are the navigation, which carries one
+accent colour per destination and shows only one of them at a time - the
+page you are on, or the one under the pointer. Four coloured icons side by
+side would be a categorical palette nobody can read (blue against violet is
+10.5 delta-E for a normal-vision reader, 4.5 for a deutan).
 
 The control loop runs on a background thread rather than as an asyncio task,
 because the GoodWe and Modbus client libraries are both synchronous and the
