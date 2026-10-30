@@ -685,11 +685,22 @@ is also how many inputs the dashboard shows - how many are wired up is a
 fact about the roof, not something to infer from a night-time reading of
 zero.
 
-An early reading, before a full day was recorded: at 10:46 PV1 made 769 W
-from the shorter string and PV2 733 W from the longer one, which is about
-30% more per module on PV1 in the late morning. That points at PV1 being
-the more easterly side, but it is one sample on one morning - the day's
-curve is the measurement.
+**The two sides here face north-east and south-west.** Which input is on
+which was not readable from the morning that this was first recorded: 1.2
+to 1.9 kW out of a 15 kW plant is a fully overcast sky, and under diffuse
+light alone the orientation hardly matters - over ten samples the longer
+string took 54% of the output while carrying 55% of the modules, so the two
+were level per module and said nothing about where they point.
+
+What settles it is the size. PV1 runs 538 V against PV2's 663 V, so PV2
+carries about a quarter more modules, and on a north-east/south-west roof
+the larger array is the south-west one: the north-east side yields barely
+half as much over a year, so it is the side that gets left short, never the
+side that gets the extra modules. The sun confirms it on its way round - by
+11:05 PV2 was 21% ahead per module, where twenty minutes earlier the two
+had been level. A north-east roof cannot gain as the sun moves south.
+
+Recorded as `PV_STRING_NAMES=North-East,South-West`.
 
 The inverter keeps **no energy counter per input**, only per plant, so
 "which side produced how much today" cannot be read off a register. It has
