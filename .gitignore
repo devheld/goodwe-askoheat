@@ -3,3 +3,6 @@ data/
 __pycache__/
 *.pyc
 .venv/
+
+# Geraeteliste mit IPs und MACs - bleibt lokal
+netzwerk.txt
