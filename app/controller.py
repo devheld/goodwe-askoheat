@@ -631,6 +631,12 @@ class SurplusController:
                 "battery_charging": readings.battery_charging,
                 "battery_state": readings.battery_state,
                 "battery_soc_pct": readings.battery_soc_pct,
+                # The house load split over the three phases, from the
+                # inverter rather than from a clamp - so the imbalance is
+                # visible wherever the clamp meters happen to be.
+                "load_phase_kw": (
+                    list(readings.load_phase_kw) if readings.load_phase_kw else None
+                ),
                 "step": self._current_step,
                 "heater_load_w": heater_load_w,
                 "askoheat_temp_c": askoheat_temp_c,
