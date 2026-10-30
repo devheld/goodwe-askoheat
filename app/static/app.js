@@ -666,11 +666,19 @@ function renderLineChart(container, series, opts) {
     }
   } else {
     const yTicks = 4;
+    let lastLabel = null;
     for (let i = 0; i <= yTicks; i++) {
       const v = vMin + ((vMax - vMin) * i) / yTicks;
       const yy = y(v);
       gridSvg += `<line x1="${padL}" x2="${width - padR}" y1="${yy}" y2="${yy}" stroke="${gridlineColor}" stroke-width="1" />`;
-      gridSvg += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="${mutedColor}">${v.toFixed(yDecimals)}</text>`;
+      // Two ticks that round to the same number read as a broken axis - a
+      // chart flat at zero labelled "1 1 1 0 0". The repeat keeps its
+      // gridline and loses its label.
+      const label = v.toFixed(yDecimals);
+      if (label !== lastLabel) {
+        gridSvg += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="${mutedColor}">${label}</text>`;
+        lastLabel = label;
+      }
     }
   }
   if (vMin <= 0 && vMax >= 0) {
