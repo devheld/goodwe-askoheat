@@ -1,4 +1,4 @@
-# AskoHeat Manager
+# Home Energy Manager
 
 A small self-hosted controller and web dashboard that diverts excess solar
 power into a resistive water heater (an [Askoma AskoHeat+](https://www.askoma.com))
@@ -571,7 +571,7 @@ unit, with the placeholders filled in for the target machine:
 
 ```ini
 [Unit]
-Description=AskoHeat Manager
+Description=Home Energy Manager
 After=network-online.target
 
 [Service]

@@ -65,83 +65,11 @@ const state = {
   period: "today",
   hidden: new Set(),
   energy: null,
-  sessions: null,
   // Filled from /api/energy; the prices themselves live in the .env file,
-  // so nothing here hardcodes a tariff.
+  // so nothing here hardcodes a tariff. chartkit.js gets the same numbers
+  // through setTariff() and does the formatting.
   tariff: { currency: "CHF", import_per_kwh: 0, export_per_kwh: 0 },
 };
-
-const tooltip = document.getElementById("tooltip");
-
-function cssVar(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-function fmt(value, digits = 1) {
-  if (value === null || value === undefined || Number.isNaN(value)) return "-";
-  return value.toLocaleString("en-GB", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-}
-
-function kwh(value, digits = 1) {
-  return `${fmt(value, digits)} kWh`;
-}
-
-function money(value) {
-  if (value === null || value === undefined || Number.isNaN(value)) return "-";
-  return `${value.toLocaleString("en-GB", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })} ${state.tariff.currency}`;
-}
-
-// Consumed kWh are priced at the import tariff even when they came off the
-// roof: that is the purchase they replaced. Exported kWh are priced at the
-// lower export tariff.
-function rateFor(kind) {
-  return kind === "export" ? state.tariff.export_per_kwh : state.tariff.import_per_kwh;
-}
-
-function cost(kwh, kind = "import") {
-  return money((kwh || 0) * rateFor(kind));
-}
-
-function kwhWithCost(kwh, kind = "import", digits = 2) {
-  return `${fmt(kwh, digits)} kWh (${cost(kwh, kind)})`;
-}
-
-function showTip(html, event) {
-  tooltip.innerHTML = html;
-  tooltip.style.opacity = "1";
-  tooltip.setAttribute("aria-hidden", "false");
-  const pad = 14;
-  const rect = tooltip.getBoundingClientRect();
-  let x = event.clientX + pad;
-  let y = event.clientY + pad;
-  if (x + rect.width > window.innerWidth - 8) x = event.clientX - rect.width - pad;
-  if (y + rect.height > window.innerHeight - 8) y = event.clientY - rect.height - pad;
-  tooltip.style.left = `${Math.max(8, x)}px`;
-  tooltip.style.top = `${Math.max(8, y)}px`;
-}
-
-function hideTip() {
-  tooltip.style.opacity = "0";
-  tooltip.setAttribute("aria-hidden", "true");
-}
-
-function tipRows(title, rows) {
-  const body = rows
-    .map(
-      (r) =>
-        `<div class="tt-row">${
-          r.color ? `<span class="swatch" style="background:${cssVar(r.color)}"></span>` : ""
-        }<span>${r.label}</span><span class="tt-val">${r.value}</span></div>`
-    )
-    .join("");
-  return `<div class="tt-title">${title}</div>${body}`;
-}
 
 // Bucket keys come back as local-time strings the backend built with
 // strftime, so they are parsed as local here too - no Date() timezone
@@ -163,17 +91,6 @@ function bucketLabel(bucket, grain, long = false) {
 }
 
 // --- shared chart scaffolding ------------------------------------------------
-
-function newSvg(container, width, height) {
-  container.innerHTML = "";
-  const svg = d3
-    .select(container)
-    .append("svg")
-    .attr("class", "chart")
-    .attr("viewBox", `0 0 ${width} ${height}`)
-    .attr("preserveAspectRatio", "xMidYMid meet");
-  return svg;
-}
 
 function drawYGrid(svg, y, left, right, { decimals = 0, zeroLine = false } = {}) {
   const ticks = y.ticks(4);
@@ -938,109 +855,6 @@ function renderDonut(energy) {
 
 // --- wallbox sessions --------------------------------------------------------
 
-function renderSessions(payload) {
-  const container = document.getElementById("chartSessions");
-  const table = document.getElementById("tableSessions");
-  const sessions = (payload.sessions || []).slice(0, 20);
-  if (!sessions.length) {
-    container.innerHTML =
-      '<div class="empty-state">No charging session recorded yet - the page fills up once a car charges.</div>';
-    table.innerHTML = "";
-    return;
-  }
-
-  const rowH = 26;
-  const width = 960;
-  const height = sessions.length * rowH + 30;
-  const padL = 150, padR = 60, padT = 8;
-  const svg = newSvg(container, width, height);
-
-  const x = d3
-    .scaleLinear()
-    .domain([0, d3.max(sessions, (s) => s.energy_kwh) * 1.1 || 1])
-    .range([padL, width - padR]);
-
-  sessions.forEach((s, i) => {
-    const y = padT + i * rowH;
-    const start = new Date(s.start);
-    svg
-      .append("text")
-      .attr("x", padL - 10)
-      .attr("y", y + rowH / 2 + 3)
-      .attr("text-anchor", "end")
-      .attr("font-size", 11)
-      .attr("fill", cssVar("--text-secondary"))
-      .text(start.toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }));
-
-    const w = Math.max(2, x(s.energy_kwh) - padL);
-    svg
-      .append("rect")
-      .attr("x", padL)
-      .attr("y", y + 4)
-      .attr("width", w)
-      .attr("height", rowH - 10)
-      .attr("rx", 4)
-      .attr("fill", cssVar("--e-wallbox"))
-      .on("mousemove", (event) =>
-        showTip(
-          tipRows(start.toLocaleString("en-GB"), [
-            { color: "--e-wallbox", label: "Charged", value: kwhWithCost(s.energy_kwh) },
-            { label: "Duration", value: `${fmt(s.duration_min, 0)} min` },
-            { label: "Peak", value: `${fmt(s.peak_kw, 1)} kW` },
-          ]),
-          event
-        )
-      )
-      .on("mouseleave", hideTip);
-
-    svg
-      .append("text")
-      .attr("x", padL + w + 8)
-      .attr("y", y + rowH / 2 + 3)
-      .attr("font-size", 11)
-      .attr("fill", cssVar("--text-secondary"))
-      .text(`${fmt(s.energy_kwh, 1)} kWh (${cost(s.energy_kwh)})`);
-  });
-
-  table.innerHTML = `
-    <table class="data">
-      <thead><tr><th>Start</th><th>Duration</th><th>Energy</th><th>Cost</th><th>Peak</th></tr></thead>
-      <tbody>${(payload.sessions || [])
-        .map(
-          (s) => `<tr>
-            <td>${new Date(s.start).toLocaleString("en-GB")}</td>
-            <td>${fmt(s.duration_min, 0)} min</td>
-            <td>${fmt(s.energy_kwh, 2)} kWh</td>
-            <td>${cost(s.energy_kwh)}</td>
-            <td>${fmt(s.peak_kw, 1)} kW</td>
-          </tr>`
-        )
-        .join("")}</tbody>
-    </table>`;
-  document.getElementById("sessionNote").textContent =
-    `Last ${payload.days} days, rebuilt from the recorded samples - ${fmt(payload.total_kwh, 1)} kWh in ${
-      payload.sessions.length
-    } session(s) worth ${cost(payload.total_kwh)}.`;
-}
-
-function renderEvents(payload) {
-  const list = document.getElementById("eventList");
-  const events = payload.events || [];
-  if (!events.length) {
-    list.innerHTML = '<li class="empty-state">No state change recorded yet.</li>';
-    return;
-  }
-  list.innerHTML = events
-    .map(
-      (e) => `<li>
-        <span class="when">${new Date(e.timestamp).toLocaleString("en-GB")}</span>
-        <span class="kind">${e.event}</span>
-        <span>${e.detail}</span>
-      </li>`
-    )
-    .join("");
-}
-
 // --- wiring ------------------------------------------------------------------
 
 function renderEnergy() {
@@ -1078,6 +892,7 @@ async function load() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.energy = await res.json();
     state.tariff = state.energy.tariff;
+    setTariff(state.tariff);
     subtitle.textContent = `Energy for ${PERIOD_LABELS[state.period]} - ${fmt(
       state.energy.totals.hours,
       1
@@ -1085,18 +900,6 @@ async function load() {
     renderEnergy();
   } catch (err) {
     subtitle.textContent = `No energy data (${err.message})`;
-  }
-
-  try {
-    const [sessions, events] = await Promise.all([
-      fetch("/api/wallbox/sessions?days=30").then((r) => r.json()),
-      fetch("/api/wallbox/events?days=30&limit=50").then((r) => r.json()),
-    ]);
-    state.sessions = sessions;
-    renderSessions(sessions);
-    renderEvents(events);
-  } catch (err) {
-    document.getElementById("sessionNote").textContent = `Wallbox history unavailable (${err.message})`;
   }
 
   document.getElementById("footerNote").textContent =

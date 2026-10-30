@@ -289,3 +289,60 @@ svg.chart {
   font-size: 12px;
   margin-top: 8px;
 }
+
+/* Table view, event list and tooltip: shared by the energy page and the
+   wallbox page since the charging sessions moved. */
+table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.data th, table.data td {
+  text-align: right;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { color: var(--text-secondary); font-weight: 600; }
+details.table-view { margin-top: 10px; }
+details.table-view summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.events { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.events li {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.events .when { color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.events .kind {
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  min-width: 72px;
+}
+
+#tooltip {
+  position: fixed;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms linear;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  z-index: 10;
+  max-width: 260px;
+}
+#tooltip .tt-title { font-weight: 600; margin-bottom: 4px; }
+#tooltip .tt-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+#tooltip .tt-row .swatch { width: 8px; height: 8px; border-radius: 2px; }
+#tooltip .tt-row .tt-val { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+.chart-note { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; }
+

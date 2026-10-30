@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Energy - AskoHeat Manager</title>
+<title>Energy - Home Energy Manager</title>
+<link rel="stylesheet" href="/static/base.css?v=3" />
 <link rel="stylesheet" href="/static/nav.css?v=1" />
 <style>
   :root {
@@ -197,58 +198,6 @@
   svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
   .empty-state { color: var(--text-muted); font-size: 13px; padding: 24px 0; text-align: center; }
 
-  table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
-  table.data th, table.data td {
-    text-align: right;
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--border);
-    font-variant-numeric: tabular-nums;
-  }
-  table.data th:first-child, table.data td:first-child { text-align: left; }
-  table.data th { color: var(--text-secondary); font-weight: 600; }
-  details.table-view { margin-top: 10px; }
-  details.table-view summary {
-    font-size: 12px;
-    color: var(--text-secondary);
-    cursor: pointer;
-  }
-
-  .events { list-style: none; margin: 0; padding: 0; font-size: 13px; }
-  .events li {
-    display: flex;
-    gap: 10px;
-    padding: 6px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .events .when { color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .events .kind {
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    font-size: 11px;
-    letter-spacing: 0.04em;
-    min-width: 72px;
-  }
-
-  #tooltip {
-    position: fixed;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 80ms linear;
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 10px;
-    font-size: 12px;
-    color: var(--text-primary);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-    z-index: 10;
-    max-width: 260px;
-  }
-  #tooltip .tt-title { font-weight: 600; margin-bottom: 4px; }
-  #tooltip .tt-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-  #tooltip .tt-row .swatch { width: 8px; height: 8px; border-radius: 2px; }
-  #tooltip .tt-row .tt-val { margin-left: auto; font-variant-numeric: tabular-nums; }
-  .footer-note { color: var(--text-muted); font-size: 12px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -307,24 +256,12 @@
     <p class="chart-note" id="curtailNote"></p>
   </div>
 
-  <div class="chart-card">
-    <h2>Wallbox charging sessions</h2>
-    <p class="chart-note" id="sessionNote">Last 30 days, rebuilt from the recorded samples.</p>
-    <div id="chartSessions"></div>
-    <details class="table-view" open><summary>Session list</summary><div id="tableSessions"></div></details>
-  </div>
-
-  <div class="chart-card">
-    <h2>Wallbox events</h2>
-    <p class="chart-note">One entry per state change, not per poll.</p>
-    <ul class="events" id="eventList"></ul>
-  </div>
-
   <p class="footer-note" id="footerNote"></p>
 </main>
 <div id="tooltip" role="tooltip" aria-hidden="true"></div>
 <script src="/static/nav.js?v=2"></script>
 <script src="/static/vendor/d3.v7.min.js"></script>
-<script src="/static/energy.js?v=8"></script>
+<script src="/static/chartkit.js?v=1"></script>
+<script src="/static/energy.js?v=9"></script>
 </body>
 </html>

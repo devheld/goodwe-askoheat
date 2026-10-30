@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Wallbox - AskoHeat Manager</title>
-<link rel="stylesheet" href="/static/base.css?v=2" />
+<title>Wallbox - Home Energy Manager</title>
+<link rel="stylesheet" href="/static/base.css?v=3" />
 <link rel="stylesheet" href="/static/nav.css?v=1" />
 </head>
 <body>
@@ -34,13 +34,30 @@
     <div id="wallboxChartWrap"></div>
   </div>
 
-  <p class="footer-note">
-    Charging sessions and the event log are on the
-    <a href="/energy">energy page</a>. As of: <span id="lastUpdate">-</span>
-    · updates every <span id="updateInterval">-</span>s
-  </p>
+  <div class="chart-card">
+    <h2>Charging sessions</h2>
+    <p class="chart-note" id="sessionNote">Last 30 days, rebuilt from the recorded samples.</p>
+    <div id="chartSessions"></div>
+    <details class="table-view" open><summary>Session list</summary><div id="tableSessions"></div></details>
+  </div>
+
+  <div class="chart-card">
+    <h2>Events</h2>
+    <p class="chart-note">One entry per state change, not per poll.</p>
+    <ul class="events" id="eventList"></ul>
+  </div>
+
+  <p class="footer-note">As of: <span id="lastUpdate">-</span> · updates every <span id="updateInterval">-</span>s</p>
 </main>
+<div id="tooltip" role="tooltip" aria-hidden="true"></div>
 <script src="/static/nav.js?v=2"></script>
+<!-- chartkit.js and app.js both define fmt() and cssVar() - same contract,
+     and app.js comes last so one definition is in force for the whole
+     page. Everything sessions.js asks of fmt() it asks with an explicit
+     number of digits, so the two agree. -->
+<script src="/static/vendor/d3.v7.min.js"></script>
+<script src="/static/chartkit.js?v=1"></script>
+<script src="/static/sessions.js?v=1"></script>
 <script src="/static/app.js?v=19"></script>
 </body>
 </html>

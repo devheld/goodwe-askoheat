@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
     controller.stop()
 
 
-app = FastAPI(title="AskoHeat Manager", lifespan=lifespan)
+app = FastAPI(title="Home Energy Manager", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

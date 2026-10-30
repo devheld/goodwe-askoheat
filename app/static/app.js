@@ -425,6 +425,9 @@ async function fetchLive() {
     renderTiles("tilesAsko", ASKO_TILE_DEFS, latest);
     renderWallbox(latest.wallbox, latest.tariff);
     renderStatusBanner(latest);
+    // Anything on this page that needs the live payload but is not part of
+    // this file - the wallbox page's charging sessions want the tariff.
+    if (typeof window.onLiveData === "function") window.onLiveData(latest);
     setText("statusLine", deviceLine(latest));
     setText("lastUpdate", new Date(latest.timestamp).toLocaleString("en-GB"));
     if (latest.poll_interval_s !== undefined) {
