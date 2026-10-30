@@ -219,7 +219,7 @@ def load_settings() -> Settings:
             os.environ.get("PRICE_EXPORT_CHF_PER_KWH", "0.10")
         ),
         battery_capacity_kwh=float(os.environ.get("BATTERY_CAPACITY_KWH", "27")),
-        db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/askoheat.db"),
+        db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/home-energy.db"),
     )
 
 
