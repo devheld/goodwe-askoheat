@@ -47,20 +47,24 @@ class Settings:
     # find out is to read again and watch whether a charge survives.
     wallbox_poll_mode: str
 
-    # Shelly 3EM, HTTP and read-only. Optional in the same way as the
-    # charger: empty SHELLY_HOST leaves it out.
-    shelly_host: str
+    # Shelly 3EM clamp meters, HTTP and read-only. Three questions, three
+    # devices, each one optional: an empty host leaves that meter out.
+    #   grid     - the three main phases. An independent witness to the
+    #              connection point and the only instrument here that
+    #              measures the current through the main fuse.
+    #   heatpump - the heat pump's feed. The largest load in the house and
+    #              the one nothing else measures at all.
+    #   wallbox  - the charger's feed. This one is not about curiosity: it
+    #              makes the charger's own Modbus registers unnecessary
+    #              while a car is drawing, which is the whole of section 7.
+    # What a device is for is the name it is configured under, not a setting
+    # on the device. It decides the sign and the columns - see ShellyClient
+    # and Reading in database.py.
+    shelly_grid_host: str
+    shelly_heatpump_host: str
+    shelly_wallbox_host: str
     shelly_port: int
     shelly_timeout_s: float
-    # Where the clamps are. "grid" is the three main phases, where this is
-    # an independent witness to the connection point and the only
-    # instrument here that measures the current through the main fuse.
-    # "heatpump" is the heat pump's own feed - the largest load in the house
-    # and the one nothing else measures at all. The role decides which
-    # columns a reading goes into, so moving the device ends one series and
-    # starts another instead of changing what the old one means halfway
-    # through. See Reading in database.py.
-    shelly_role: str
 
     step_min: int
     step_max: int
@@ -121,26 +125,6 @@ def _wallbox_poll_mode() -> str:
     return "gated"
 
 
-SHELLY_ROLES = ("grid", "heatpump")
-
-
-def _shelly_role() -> str:
-    """Read SHELLY_ROLE, falling back to where the device started out.
-
-    Same reasoning as _wallbox_poll_mode: a typo must not quietly file the
-    heat pump's consumption away as a measurement of the grid.
-    """
-    raw = os.environ.get("SHELLY_ROLE", "grid").strip().lower()
-    if raw in SHELLY_ROLES:
-        return raw
-    logging.getLogger(__name__).warning(
-        "SHELLY_ROLE=%r is not one of %s - falling back to 'grid'",
-        raw,
-        ", ".join(SHELLY_ROLES),
-    )
-    return "grid"
-
-
 def load_settings() -> Settings:
     return Settings(
         goodwe_host=os.environ.get("GOODWE_HOST", "192.168.68.50"),
@@ -177,13 +161,18 @@ def load_settings() -> Settings:
             os.environ.get("WALLBOX_IDLE_POLL_INTERVAL_S", "1200")
         ),
         wallbox_poll_mode=_wallbox_poll_mode(),
-        shelly_host=os.environ.get("SHELLY_HOST", ""),
+        # SHELLY_HOST is the name the first of these meters had when it was
+        # the only one, kept as a fallback so an older .env still works.
+        shelly_grid_host=os.environ.get(
+            "SHELLY_GRID_HOST", os.environ.get("SHELLY_HOST", "")
+        ),
+        shelly_heatpump_host=os.environ.get("SHELLY_HEATPUMP_HOST", ""),
+        shelly_wallbox_host=os.environ.get("SHELLY_WALLBOX_HOST", ""),
         shelly_port=int(os.environ.get("SHELLY_PORT", "80")),
         # Short on purpose: this is a dashboard reading on the heating loop's
         # clock, and a meter that is slow to answer must not hold up the
         # heater decision behind it.
         shelly_timeout_s=float(os.environ.get("SHELLY_TIMEOUT_S", "3")),
-        shelly_role=_shelly_role(),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
         poll_interval_s=int(os.environ.get("POLL_INTERVAL_S", "60")),

@@ -93,6 +93,14 @@ class Reading:
     heatpump_kw: float | None = None
     heatpump_phase_kw: tuple[float, float, float] | None = None
     heatpump_energy_kwh: float | None = None
+    # A clamp meter on the charger's feed, which is a different measurement
+    # from wallbox_power_kw above: that one is what the charger says about
+    # itself, every five minutes and only when it is safe to ask. This one
+    # is measured from outside, on every tick, and cannot interrupt a
+    # charge. Where the two disagree, this is the witness.
+    wallbox_meter_kw: float | None = None
+    wallbox_meter_phase_kw: tuple[float, float, float] | None = None
+    wallbox_meter_energy_kwh: float | None = None
     # House load per phase, from the inverter rather than from a clamp, so
     # the record of the phase imbalance continues wherever the Shelly ends
     # up - or if it is gone altogether.
@@ -202,6 +210,11 @@ class HistoryStore:
                 ("heatpump_l2_kw", "REAL"),
                 ("heatpump_l3_kw", "REAL"),
                 ("heatpump_energy_kwh", "REAL"),
+                ("wallbox_meter_kw", "REAL"),
+                ("wallbox_meter_l1_kw", "REAL"),
+                ("wallbox_meter_l2_kw", "REAL"),
+                ("wallbox_meter_l3_kw", "REAL"),
+                ("wallbox_meter_energy_kwh", "REAL"),
                 ("load_l1_kw", "REAL"),
                 ("load_l2_kw", "REAL"),
                 ("load_l3_kw", "REAL"),
@@ -244,10 +257,13 @@ class HistoryStore:
                  shelly_l1_a, shelly_l2_a, shelly_l3_a,
                  shelly_import_kwh, shelly_export_kwh,
                  heatpump_kw, heatpump_l1_kw, heatpump_l2_kw, heatpump_l3_kw,
-                 heatpump_energy_kwh, load_l1_kw, load_l2_kw, load_l3_kw)
+                 heatpump_energy_kwh, load_l1_kw, load_l2_kw, load_l3_kw,
+                 wallbox_meter_kw, wallbox_meter_l1_kw, wallbox_meter_l2_kw,
+                 wallbox_meter_l3_kw, wallbox_meter_energy_kwh)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?)
                 """,
                 (
                     reading.timestamp,
@@ -276,6 +292,9 @@ class HistoryStore:
                     *(reading.heatpump_phase_kw or (None, None, None)),
                     reading.heatpump_energy_kwh,
                     *(reading.load_phase_kw or (None, None, None)),
+                    reading.wallbox_meter_kw,
+                    *(reading.wallbox_meter_phase_kw or (None, None, None)),
+                    reading.wallbox_meter_energy_kwh,
                 ),
             )
 

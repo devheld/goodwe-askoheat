@@ -73,17 +73,21 @@ async def lifespan(app: FastAPI):
         if settings.wallbox_host
         else None
     )
-    shelly = (
-        ShellyClient(
-            settings.shelly_host,
-            settings.shelly_port,
-            settings.shelly_timeout_s,
-            settings.shelly_role,
+    # One clamp meter per question, each one optional. What a meter is for
+    # is the name it is configured under: that name decides the sign it is
+    # decoded with and the columns it is written to.
+    shelly_meters = {
+        role: ShellyClient(host, settings.shelly_port, settings.shelly_timeout_s, role)
+        for role, host in (
+            ("grid", settings.shelly_grid_host),
+            ("heatpump", settings.shelly_heatpump_host),
+            ("wallbox", settings.shelly_wallbox_host),
         )
-        if settings.shelly_host
-        else None
+        if host
+    }
+    controller = SurplusController(
+        settings, reader, askoheat, store, wallbox, shelly_meters
     )
-    controller = SurplusController(settings, reader, askoheat, store, wallbox, shelly)
 
     worker_thread = threading.Thread(target=controller.run_forever, daemon=True)
     worker_thread.start()

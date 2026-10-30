@@ -54,7 +54,7 @@ class SurplusController:
         askoheat: AskoHeatController,
         store: HistoryStore,
         wallbox: GoodWeWallboxReader | None = None,
-        shelly: ShellyClient | None = None,
+        shelly_meters: dict[str, ShellyClient] | None = None,
     ) -> None:
         self._settings = settings
         self._reader = reader
@@ -74,14 +74,15 @@ class SurplusController:
         # end, so the first quiet tick may read the charger straight away
         # instead of leaving the panel blank for the first six minutes.
         self._wallbox_quiet_ticks = settings.wallbox_idle_ticks
-        # The second meter at the connection point. Also read-only and also
-        # never consulted for a heating decision, but unlike the charger it
-        # is read on every tick: it is plain HTTP, it has no session limit
-        # and nothing it does can interrupt anything.
-        self._shelly = shelly
-        # Last snapshot, for _device_health - which reports what the last
-        # poll found rather than asking again.
-        self._shelly_snapshot: dict | None = None
+        # The clamp meters, keyed by what each one is on: "grid",
+        # "heatpump", "wallbox". Read-only and never consulted for a heating
+        # decision, but unlike the charger they are read on every tick:
+        # plain HTTP, no session limit, and nothing they do can interrupt
+        # anything.
+        self._shelly_meters: dict[str, ShellyClient] = dict(shelly_meters or {})
+        # Last snapshot per meter, for _device_health - which reports what
+        # the last poll found rather than asking again.
+        self._shelly_snapshots: dict[str, dict] = {}
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -162,11 +163,11 @@ class SurplusController:
                 "online": bool(wallbox.get("online")),
                 "error": wallbox.get("error"),
             }
-        if self._shelly is not None:
-            shelly = self._shelly_snapshot or {}
-            health["shelly"] = {
-                "online": bool(shelly.get("online")),
-                "error": shelly.get("error"),
+        for role in self._shelly_meters:
+            snapshot = self._shelly_snapshots.get(role) or {}
+            health["shelly_" + role] = {
+                "online": bool(snapshot.get("online")),
+                "error": snapshot.get("error"),
             }
         return health
 
@@ -185,10 +186,10 @@ class SurplusController:
         # how an unreachable inverter also blanked the wallbox panel, for no
         # reason other than the order of the lines in _tick().
         wallbox = self._poll_wallbox()
-        # The second meter matters most exactly here. It measures the grid
-        # connection point on its own, so with the inverter gone the page
-        # can still say what the house is drawing.
-        shelly = self._poll_shelly()
+        # The clamp meters matter most exactly here. They measure on their
+        # own, so with the inverter gone the page can still say what the
+        # house is drawing and where most of it is going.
+        shelly = self._poll_shelly_meters()
         empty = dict.fromkeys(
             (
                 "pv_kw",
@@ -549,13 +550,14 @@ class SurplusController:
 
         # Same deal as the wallbox: dashboard and history only, after the
         # heating decision, errors swallowed into the payload.
-        shelly = self._poll_shelly()
-        # The clamps measure whatever they are on, so the role decides which
-        # columns the reading goes into. Moving the device ends one series
-        # and starts another, instead of leaving one series that changes
-        # meaning halfway through.
-        at_grid = (shelly or {}) if self._settings.shelly_role == "grid" else {}
-        at_heatpump = (shelly or {}) if self._settings.shelly_role == "heatpump" else {}
+        shelly = self._poll_shelly_meters() or {}
+        # Each meter fills its own columns, so the three series stay apart
+        # and a query can never pick up the wrong one. A meter that is not
+        # installed, or that did not answer, leaves its columns NULL instead
+        # of writing a zero that would read as "measured nothing".
+        at_grid = shelly.get("grid") or {}
+        at_heatpump = shelly.get("heatpump") or {}
+        at_wallbox = shelly.get("wallbox") or {}
 
         timestamp = datetime.now(timezone.utc).isoformat()
         reading = Reading(
@@ -584,6 +586,9 @@ class SurplusController:
             heatpump_kw=at_heatpump.get("total_kw"),
             heatpump_phase_kw=at_heatpump.get("phase_kw"),
             heatpump_energy_kwh=at_heatpump.get("import_kwh"),
+            wallbox_meter_kw=at_wallbox.get("total_kw"),
+            wallbox_meter_phase_kw=at_wallbox.get("phase_kw"),
+            wallbox_meter_energy_kwh=at_wallbox.get("import_kwh"),
             load_phase_kw=readings.load_phase_kw,
         )
         self._store.insert(reading)
@@ -652,18 +657,20 @@ class SurplusController:
             status_text,
         )
 
-    def _poll_shelly(self) -> dict | None:
-        """Read the second meter, every tick.
+    def _poll_shelly_meters(self) -> dict[str, dict] | None:
+        """Read every clamp meter, every tick, keyed by what it is on.
 
-        No gate and no slower clock, unlike _poll_wallbox: this is an HTTP
-        GET against a device that is happy to be asked and has nothing to
-        interrupt. The client never raises, so an unreachable meter arrives
-        here as a payload with online=False.
+        No gate and no slower clock, unlike _poll_wallbox: these are HTTP
+        GETs against devices that are happy to be asked and have nothing to
+        interrupt. The client never raises, so a meter that is away arrives
+        here as a payload with online=False rather than as a missing key -
+        which keeps a dead meter apart from one that was never installed.
         """
-        if self._shelly is None:
+        if not self._shelly_meters:
             return None
-        self._shelly_snapshot = self._shelly.as_dict()
-        return self._shelly_snapshot
+        for role, client in self._shelly_meters.items():
+            self._shelly_snapshots[role] = client.as_dict()
+        return dict(self._shelly_snapshots)
 
     def _poll_wallbox(self, vehicle_load_kw: float | None = None) -> dict | None:
         """Read the charger on its own, slower clock - and not at all while a

@@ -42,10 +42,12 @@ class ShellyClient:
     this device does not mind being asked.
 
     Where the clamps sit is a matter of configuration: role "grid" is the
-    three main phases, role "heatpump" the heat pump's feed. The rest of
-    this docstring was written with the clamps at the connection point and
-    describes that role; what carries over to any other is the hardware and
-    the note on the sign.
+    three main phases, "heatpump" the heat pump's feed, "wallbox" the
+    charger's. Only "grid" is a measurement of a flow that has two
+    directions; the others are loads, and the sign note below is what tells
+    them apart. The rest of this docstring was written with the clamps at
+    the connection point and describes that role; what carries over to any
+    other is the hardware and the sign.
 
     It exists because the inverter was otherwise the only witness to its own
     numbers, and those numbers do not add up: battery discharge minus house
