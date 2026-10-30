@@ -153,6 +153,10 @@ async def energy(period: str = Query("today")) -> dict:
     # because that is exactly the purchase it replaced.
     self_consumed = max(0.0, totals["consumption"] - totals["grid_import"])
     payload["tariff"] = _tariff()
+    # Which MPPT input faces which way is in no register - it was read off
+    # the daily curve and lives in the .env file (see README). The page needs
+    # the names to label the two sides it already has the kWh for.
+    payload["pv_string_names"] = list(settings.pv_string_names)
     payload["costs"] = {
         "spent": round(totals["grid_import"] * buy, 2),
         "earned": round(totals["grid_export"] * sell, 2),

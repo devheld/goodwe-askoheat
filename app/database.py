@@ -391,6 +391,7 @@ class HistoryStore:
                 SELECT
                     timestamp,
                     pv_kw,
+                    pv1_kw, pv2_kw, pv3_kw, pv4_kw,
                     consumption_kw,
                     grid_kw,
                     battery_charge_kw,
@@ -407,6 +408,18 @@ class HistoryStore:
             SELECT
                 strftime(?, timestamp, 'localtime')                    AS bucket,
                 SUM(pv_kw * h)                                         AS pv,
+                -- One MPPT input per roof side. COALESCE rather than a plain
+                -- sum because these columns only exist from the day they were
+                -- added, and a row without them must not pull the whole bucket
+                -- to NULL. pv_split is the production that does have a split,
+                -- so the page can show the rest as unrecorded instead of
+                -- letting the two sides quietly stand in for the total.
+                SUM(COALESCE(pv1_kw, 0) * h)                           AS pv1,
+                SUM(COALESCE(pv2_kw, 0) * h)                           AS pv2,
+                SUM(COALESCE(pv3_kw, 0) * h)                           AS pv3,
+                SUM(COALESCE(pv4_kw, 0) * h)                           AS pv4,
+                SUM(CASE WHEN pv1_kw IS NULL THEN 0
+                         ELSE pv_kw * h END)                           AS pv_split,
                 SUM(consumption_kw * h)                                AS consumption,
                 SUM(MAX(grid_kw, 0) * h)                               AS grid_export,
                 SUM(MAX(-grid_kw, 0) * h)                              AS grid_import,
@@ -435,6 +448,11 @@ class HistoryStore:
 
         keys = (
             "pv",
+            "pv1",
+            "pv2",
+            "pv3",
+            "pv4",
+            "pv_split",
             "consumption",
             "grid_export",
             "grid_import",

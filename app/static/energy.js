@@ -18,6 +18,41 @@ const LOSSES = [
   { key: "loss_curtailed", name: "Held back", color: "--e-curtailed" },
 ];
 
+// The roof sides, one MPPT input each. The labels come from the service
+// (PV_STRING_NAMES) because which input faces which way is in no register,
+// and only as many sides are drawn as there are validated colours: a third
+// input would need a third colour, which is deliberately not generated.
+const ROOF_COLORS = ["--e-roof-a", "--e-roof-b"];
+
+// Production in a bucket that predates the per-input columns. Neutral on
+// purpose - it is a hole in the record, not an entity, and it sits in the
+// stack only so the column still reaches the production that really
+// happened instead of shrinking to the part that was split.
+const ROOF_REST = { key: "pv_rest", name: "No split recorded", color: "--baseline" };
+
+function roofSides(energy) {
+  const names = energy.pv_string_names || [];
+  return names.slice(0, ROOF_COLORS.length).map((name, i) => ({
+    key: `pv${i + 1}`,
+    name,
+    color: ROOF_COLORS[i],
+  }));
+}
+
+// Is there per-side data in this period at all? A period entirely before the
+// columns existed, or an older service that does not send the names, gets no
+// tiles and no chart - a row of zeros would claim the roof made nothing.
+function roofTotals(energy) {
+  const sides = roofSides(energy);
+  const sum = sides.reduce((a, side) => a + (energy.totals[side.key] || 0), 0);
+  return {
+    sides,
+    sum,
+    rest: Math.max((energy.totals.pv || 0) - sum, 0),
+    ok: sum > 0.01,
+  };
+}
+
 const PERIOD_LABELS = {
   today: "today",
   "10d": "the last 10 days",
@@ -284,6 +319,26 @@ function renderKpis(energy) {
       wide: true,
     },
   ];
+  // The two roof sides go directly under the production tile, because that
+  // is the number they divide up. No money line: which kWh of a side were
+  // self-consumed and which were exported is not recorded per input, and
+  // prorating the total would be an invented split.
+  const roof = roofTotals(energy);
+  if (roof.ok) {
+    tiles.splice(
+      1,
+      0,
+      ...roof.sides.map((side) => ({
+        label: side.name,
+        value: kwh(t[side.key]),
+        sub: `${fmt((100 * t[side.key]) / roof.sum, 0)}% of the ${fmt(
+          roof.sum
+        )} kWh measured per side`,
+        color: side.color,
+      }))
+    );
+  }
+
   const wrap = document.getElementById("kpis");
   wrap.innerHTML = "";
   for (const tile of tiles) {
@@ -558,6 +613,169 @@ function renderStackTable(energy) {
       <thead><tr>
         <th>Bucket</th><th>Household</th><th>AskoHeat</th><th>Wallbox</th>
         <th>Total</th><th>Value</th><th>Solar</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// --- production per roof side ------------------------------------------------
+
+// Stacked, because the two sides add up to something real: the top of the
+// column is what the plant produced in that bucket and each segment is one
+// side of the roof. Its own card rather than more series in the consumption
+// chart - that one is about where the energy went, this is about where it
+// came from, and they share nothing but the axis unit.
+function renderRoof(energy) {
+  const card = document.getElementById("roofCard");
+  const roof = roofTotals(energy);
+  if (!roof.ok) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const sides = roof.sides;
+  // Production the inverter reported but did not break down. Per bucket, so
+  // a day that was only half recorded shows the hole where it happened.
+  const buckets = energy.buckets.map((d) => ({
+    ...d,
+    pv_rest: Math.max(
+      (d.pv || 0) - sides.reduce((a, side) => a + (d[side.key] || 0), 0),
+      0
+    ),
+  }));
+  const anyRest = buckets.some((d) => d.pv_rest > 0.005);
+  const stack = anyRest ? [...sides, ROOF_REST] : sides;
+  renderLegend("legendRoof", stack);
+
+  const note = [
+    "One MPPT input of the inverter per roof side, stacked to what the plant produced.",
+  ];
+  if (anyRest) {
+    note.push(
+      `${fmt(roof.rest)} of ${fmt(energy.totals.pv)} kWh here was recorded ` +
+        "before the inverter was read per input, so it has no split."
+    );
+  }
+  document.getElementById("roofNote").textContent = note.join(" ");
+
+  const container = document.getElementById("chartRoof");
+  if (!buckets.length) {
+    container.innerHTML = '<div class="empty-state">No production in this period.</div>';
+    document.getElementById("tableRoof").innerHTML = "";
+    return;
+  }
+
+  const width = 960;
+  const height = 240;
+  const padL = 48, padR = 12, padT = 12, padB = 28;
+
+  const svg = newSvg(container, width, height);
+  const band = d3
+    .scaleBand()
+    .domain(buckets.map((d) => d.bucket))
+    .range([padL, width - padR])
+    .padding(0.22);
+  const max = d3.max(buckets, (d) => d3.sum(stack, (side) => d[side.key] || 0)) || 0;
+  const y = d3
+    .scaleLinear()
+    .domain([0, max * 1.1 || 1])
+    .range([height - padB, padT]);
+
+  const decimals = y.domain()[1] < 5 ? 1 : 0;
+  drawYGrid(svg, y, padL, width - padR, { decimals });
+
+  const GAP = 2;
+  const layer = svg.append("g");
+  for (const bucket of buckets) {
+    let acc = 0;
+    const segments = [];
+    for (const side of stack) {
+      const value = bucket[side.key] || 0;
+      if (value > 0) segments.push({ side, y0: acc, y1: acc + value });
+      acc += value;
+    }
+    const top = segments[segments.length - 1];
+    for (const seg of segments) {
+      const yTop = y(seg.y1);
+      const h = Math.max(0, y(seg.y0) - yTop - (seg === top ? 0 : GAP));
+      layer
+        .append("path")
+        .attr(
+          "d",
+          seg === top
+            ? barPath(band(bucket.bucket), yTop, band.bandwidth(), h, 4)
+            : `M${band(bucket.bucket)},${yTop}h${band.bandwidth()}v${h}h${-band.bandwidth()}Z`
+        )
+        .attr("fill", cssVar(seg.side.color));
+    }
+  }
+
+  drawXLabels(svg, band, buckets, energy.grain, height - padB);
+
+  svg
+    .append("g")
+    .selectAll("rect")
+    .data(buckets)
+    .join("rect")
+    .attr("x", (d) => band(d.bucket))
+    .attr("y", padT)
+    .attr("width", band.bandwidth())
+    .attr("height", height - padB - padT)
+    .attr("fill", "transparent")
+    .on("mousemove", (event, d) => {
+      const split = sides.reduce((a, side) => a + (d[side.key] || 0), 0);
+      const rows = stack.map((side) => ({
+        color: side.color,
+        label: side.name,
+        // The share is of the two sides, not of production, so the two
+        // percentages add up to a hundred even in a bucket where part of
+        // the production has no split.
+        value:
+          side === ROOF_REST || split <= 0
+            ? `${fmt(d[side.key] || 0, 2)} kWh`
+            : `${fmt(d[side.key] || 0, 2)} kWh (${fmt(
+                (100 * (d[side.key] || 0)) / split,
+                0
+              )}%)`,
+      }));
+      rows.push({ label: "Produced", value: `${fmt(d.pv, 2)} kWh` });
+      showTip(tipRows(bucketLabel(d.bucket, energy.grain, true), rows), event);
+    })
+    .on("mouseleave", hideTip);
+
+  renderRoofTable(energy, buckets, sides);
+}
+
+function renderRoofTable(energy, buckets, sides) {
+  // The share column only means something on a two-sided roof; with one
+  // input named it would be a column of 100%.
+  const shareOf = sides.length === 2 ? sides[1] : null;
+  const rows = buckets
+    .map((d) => {
+      const split = sides.reduce((a, side) => a + (d[side.key] || 0), 0);
+      const cells = sides.map((side) => `<td>${fmt(d[side.key] || 0, 2)}</td>`);
+      if (shareOf) {
+        cells.push(
+          `<td>${
+            split > 0 ? `${fmt((100 * (d[shareOf.key] || 0)) / split, 0)} %` : "-"
+          }</td>`
+        );
+      }
+      return `<tr>
+        <td>${bucketLabel(d.bucket, energy.grain, true)}</td>
+        ${cells.join("")}
+        <td>${fmt(d.pv, 2)}</td>
+      </tr>`;
+    })
+    .join("");
+  const head = sides.map((side) => `<th>${side.name}</th>`).join("");
+  document.getElementById("tableRoof").innerHTML = `
+    <table class="data">
+      <thead><tr>
+        <th>Bucket</th>${head}
+        ${shareOf ? `<th>${shareOf.name} share</th>` : ""}
+        <th>Produced</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -845,6 +1063,9 @@ function renderEnergy() {
   renderLegend("legendLoss", LOSSES);
 
   renderStack(state.energy);
+  // Its legend depends on whether this period has an unsplit remainder, so
+  // it is built inside the renderer rather than up here with the others.
+  renderRoof(state.energy);
   renderGrid(state.energy);
   renderDonut(state.energy);
   renderLosses(state.energy);

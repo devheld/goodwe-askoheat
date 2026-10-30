@@ -37,6 +37,14 @@
        battery colour: it is the same energy, one layer down. */
     --e-loss:      #6f7682;
     --e-curtailed: #9b4f96;
+    /* The two roof sides. Side A is deliberately the solar blue: these are
+       the same kWh as the PV tile, one input down. Side B is the amber that
+       cleared the validator against it in both modes (worst CVD separation
+       delta-E 26.5 light / 27.3 dark, normal vision 29.3 / 30.0) - the same
+       two colours the live dashboard uses for the same two sides. A third
+       input would need a third validated colour and is not generated. */
+    --e-roof-a: #2a78d6;
+    --e-roof-b: #b06a00;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -60,6 +68,8 @@
       --e-battery: #c98500;
       --e-loss:      #8b929e;
       --e-curtailed: #b06aab;
+      --e-roof-a: #3987e5;
+      --e-roof-b: #c47a10;
     }
   }
   :root[data-theme="dark"] {
@@ -83,6 +93,8 @@
     --e-battery: #c98500;
     --e-loss:      #8b929e;
     --e-curtailed: #b06aab;
+    --e-roof-a: #3987e5;
+    --e-roof-b: #c47a10;
   }
 
   * { box-sizing: border-box; }
@@ -265,6 +277,14 @@
     <details class="table-view"><summary>Show as table</summary><div id="tableStack"></div></details>
   </div>
 
+  <div class="chart-card" id="roofCard" hidden>
+    <h2>Production by roof side</h2>
+    <p class="chart-note" id="roofNote"></p>
+    <div class="legend" id="legendRoof"></div>
+    <div id="chartRoof"></div>
+    <details class="table-view"><summary>Show as table</summary><div id="tableRoof"></div></details>
+  </div>
+
   <div class="chart-card">
     <h2>Grid balance</h2>
     <p class="chart-note">Drawn from the grid and exported, side by side - both counted upwards.</p>
@@ -304,6 +324,6 @@
 </main>
 <div id="tooltip" role="tooltip" aria-hidden="true"></div>
 <script src="/static/vendor/d3.v7.min.js"></script>
-<script src="/static/energy.js?v=7"></script>
+<script src="/static/energy.js?v=8"></script>
 </body>
 </html>

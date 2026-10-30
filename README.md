@@ -692,20 +692,38 @@ light alone the orientation hardly matters - over ten samples the longer
 string took 54% of the output while carrying 55% of the modules, so the two
 were level per module and said nothing about where they point.
 
-What settles it is the size. PV1 runs 538 V against PV2's 663 V, so PV2
-carries about a quarter more modules, and on a north-east/south-west roof
-the larger array is the south-west one: the north-east side yields barely
-half as much over a year, so it is the side that gets left short, never the
-side that gets the extra modules. The sun confirms it on its way round - by
-11:05 PV2 was 21% ahead per module, where twenty minutes earlier the two
-had been level. A north-east roof cannot gain as the sun moves south.
+The afternoon of the same day settled it. It cleared up, and with direct
+sun the two sides stopped behaving alike:
 
-Recorded as `PV_STRING_NAMES=North-East,South-West`.
+    Hour    PV1        PV2        PV2 share
+    12:00   1.190 kW   1.932 kW   62%
+    13:00   0.781 kW   4.588 kW   85%
+    14:00   0.607 kW   1.905 kW   76%
+
+    Peak    PV1  1.371 kW at 12:21     PV2  8.565 kW at 13:41
+    Day     PV1  3.89 kWh (28%)        PV2  10.14 kWh (72%)
+
+PV1 peaks before solar noon and falls away from then on; PV2 is still
+climbing at that point and makes six times as much an hour later. The
+south-west share goes from 59% before solar noon to 78% after it, and a
+north-east roof cannot gain as the sun moves south. So PV1 is the
+north-east side and PV2 the south-west one, recorded as
+`PV_STRING_NAMES=North-East,South-West`.
+
+The 28/72 split is harder than the module count alone would be - PV2
+carries about a quarter more modules but made two and a half times the
+energy. That is late October: a north-east roof only catches direct sun in
+the first hours of the morning, and those hours were overcast. The split
+narrows towards midsummer.
 
 The inverter keeps **no energy counter per input**, only per plant, so
 "which side produced how much today" cannot be read off a register. It has
 to be integrated from the recorded power, which is why `pv1_kw..pv4_kw` are
-columns in the history rather than only numbers on the dashboard.
+columns in the history rather than only numbers on the dashboard, and why
+the energy page sums them itself per bucket. Rows recorded before those
+columns existed hold NULL, not zero, and the page shows that production as
+a neutral segment labelled as having no split rather than letting the two
+sides stand in for a total they do not add up to.
 
 ## Known limitations
 
