@@ -835,6 +835,19 @@ function renderLineChart(container, series, opts) {
     }
   } else {
     const yTicks = 4;
+    // A series that only varies in the third decimal - the charger's 5W
+    // standby, say - rounds every tick to the same number, and the dedupe
+    // below then leaves an axis with one label and four blank gridlines.
+    // Give it enough decimals to tell the ticks apart before deduping.
+    let decimals = yDecimals;
+    while (decimals < 3) {
+      const seen = new Set();
+      for (let i = 0; i <= yTicks; i++) {
+        seen.add((vMin + ((vMax - vMin) * i) / yTicks).toFixed(decimals));
+      }
+      if (seen.size > 1) break;
+      decimals += 1;
+    }
     let lastLabel = null;
     for (let i = 0; i <= yTicks; i++) {
       const v = vMin + ((vMax - vMin) * i) / yTicks;
@@ -843,7 +856,7 @@ function renderLineChart(container, series, opts) {
       // Two ticks that round to the same number read as a broken axis - a
       // chart flat at zero labelled "1 1 1 0 0". The repeat keeps its
       // gridline and loses its label.
-      const label = v.toFixed(yDecimals);
+      const label = v.toFixed(decimals);
       if (label !== lastLabel) {
         gridSvg += `<text x="${padL - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="${mutedColor}">${label}</text>`;
         lastLabel = label;
