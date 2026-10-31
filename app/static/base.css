@@ -103,6 +103,16 @@
 
 * { box-sizing: border-box; }
 
+/* Phones. A six-column table cannot shrink to a 309px column, and a table
+   that is wider than the page makes everything else on it scroll sideways
+   too. So the table scrolls inside its own box - display:block is what
+   allows that, because a table is sized by its content and ignores
+   overflow-x otherwise. */
+@media (max-width: 560px) {
+  table.data { display: block; overflow-x: auto; font-size: 12px; }
+  table.data th, table.data td { padding: 6px; }
+}
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -304,6 +314,23 @@ table.data th, table.data td {
 }
 table.data th:first-child, table.data td:first-child { text-align: left; }
 table.data th { color: var(--text-secondary); font-weight: 600; }
+/* The cross-check between the charger and the clamp on its feed, as a
+   stack rather than as four columns one of which is a sentence. Used below
+   560px; above it the same rows are a table. */
+.xcheck { display: grid; gap: 12px; font-size: 13px; }
+.xcheck .row { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+.xcheck .row:last-child { border-bottom: 0; padding-bottom: 0; }
+.xcheck .what { font-weight: 600; color: var(--text-primary); }
+.xcheck .values {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 2px 0 4px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.xcheck .says { color: var(--text-muted); font-size: 12px; }
+
 details.table-view { margin-top: 10px; }
 details.table-view summary {
   font-size: 12px;

@@ -220,8 +220,21 @@ function renderCrosscheck(x) {
           }% of the charger's own figure.`,
   });
 
-  body.innerHTML = `
-    <table class="data">
+  // Four columns, one of which is a sentence, is a table where there is
+  // room for one and a mess where there is not. On a phone the same rows
+  // become a stack.
+  const narrow = (body.clientWidth || window.innerWidth) < 560;
+  body.innerHTML = narrow
+    ? `<div class="xcheck">${rows
+        .map(
+          (r) => `<div class="row">
+            <div class="what">${r.what}</div>
+            <div class="values"><span>Clamp ${r.clamp}</span><span>Charger ${r.charger}</span></div>
+            <div class="says">${r.says}</div>
+          </div>`
+        )
+        .join("")}</div>`
+    : `<table class="data">
       <thead><tr><th>Quantity</th><th>Clamp meter</th><th>Charger</th><th>What that establishes</th></tr></thead>
       <tbody>${rows
         .map(
