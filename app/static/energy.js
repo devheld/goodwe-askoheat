@@ -226,7 +226,7 @@ function renderKpis(energy) {
       label: "Wallbox",
       value: kwh(t.wallbox),
       money: cost(t.wallbox),
-      sub: "Car charging",
+      sub: wallboxSub(energy),
       color: "--e-wallbox",
     },
     {
@@ -293,6 +293,18 @@ function heatpumpSub(energy) {
     return `Metered for ${fmt(covered)} of ${fmt(total)} h - the rest is in Household`;
   }
   return "Measured on its own feed";
+}
+
+// Measured off the clamp meter on the charger's feed, or reconstructed from
+// the charger's own counter before there was one - and for a period that
+// straddles the day it went in, both. A number that mixes the two says so.
+function wallboxSub(energy) {
+  const total = energy.totals.wallbox || 0;
+  const measured = energy.totals.wallbox_measured || 0;
+  if (total <= 0) return "No charging recorded";
+  if (measured >= total - 0.005) return "Measured on the charger's own feed";
+  if (measured <= 0.005) return "Reconstructed from the charger's counter";
+  return `${fmt(measured, 1)} of ${fmt(total, 1)} kWh measured on its own feed`;
 }
 
 // The tile's own breakdown. Each line says which bucket it is, because the

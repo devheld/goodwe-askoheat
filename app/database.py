@@ -479,6 +479,7 @@ class HistoryStore:
             "heatpump",
             "heatpump_hours",
             "wallbox",
+            "wallbox_measured",
             "other",
             "loss_overhead",
             "loss_battery",
@@ -491,9 +492,10 @@ class HistoryStore:
         # _wallbox_series). The rest of the house is then what is left once
         # the heater, the pump and the car are taken off the measured
         # consumption.
-        wallbox = self._wallbox_energy_by_bucket(spec["fmt"], since)
+        wallbox, wallbox_measured = self._wallbox_energy_by_bucket(spec["fmt"], since)
         for row in rows:
             row["wallbox"] = wallbox.get(row["bucket"], 0.0)
+            row["wallbox_measured"] = wallbox_measured.get(row["bucket"], 0.0)
             row["other"] = max(
                 (row["consumption"] or 0.0)
                 - (row["asko"] or 0.0)
@@ -963,14 +965,24 @@ class HistoryStore:
                     sample["house_kw"] - floor,
                 )
 
-    def _wallbox_energy_by_bucket(self, fmt: str, since: datetime) -> dict[str, float]:
+    def _wallbox_energy_by_bucket(
+        self, fmt: str, since: datetime
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """Charger energy per bucket, and how much of it was measured.
+
+        Two dicts rather than one, because a bucket that mixes a measurement
+        with a reconstruction has to be able to say so.
+        """
         buckets: dict[str, float] = {}
+        measured: dict[str, float] = {}
         for sample in self._wallbox_series(since.isoformat(), fmt):
-            if sample["kwh"]:
-                buckets[sample["bucket"]] = (
-                    buckets.get(sample["bucket"], 0.0) + sample["kwh"]
-                )
-        return buckets
+            if not sample["kwh"]:
+                continue
+            bucket = sample["bucket"]
+            buckets[bucket] = buckets.get(bucket, 0.0) + sample["kwh"]
+            if sample["metered"]:
+                measured[bucket] = measured.get(bucket, 0.0) + sample["kwh"]
+        return buckets, measured
 
     def wallbox_crosscheck(self, since_iso: str) -> dict:
         """Do the charger and the clamp on its feed agree?
