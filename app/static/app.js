@@ -709,11 +709,28 @@ function renderPowerZoomBar() {
     : `${from.toLocaleString("en-GB")} - ${to.toLocaleString("en-GB")} (${span})`;
 }
 
+// Repeated from chartkit.js, which the three live pages do not load - see
+// the comment there for why a chart is measured in pixels rather than drawn
+// in a fixed box and scaled to fit.
+function chartWidth(container, fallback = 960) {
+  const w = container && container.clientWidth ? Math.round(container.clientWidth) : 0;
+  return Math.max(w || fallback, 260);
+}
+
+// Also repeated from chartkit.js, for the same reason.
+function onViewportResize(redraw) {
+  let timer = null;
+  window.addEventListener("resize", () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(redraw, 200);
+  });
+}
+
 // Renders a multi-series line chart as SVG with a hover crosshair.
 // series: [{ name, color, points: [{t: Date, v: number}] }]
 function renderLineChart(container, series, opts) {
   const {
-    width = 960,
+    width = chartWidth(container),
     height = 220,
     hours,
     stepped = false,
@@ -814,7 +831,7 @@ function renderLineChart(container, series, opts) {
     for (let v = yMinOpt; v <= yMaxOpt + 1e-9; v += yTickStep) {
       const yy = y(v);
       gridSvg += `<line x1="${padL}" x2="${width - padR}" y1="${yy}" y2="${yy}" stroke="${gridlineColor}" stroke-width="1" />`;
-      gridSvg += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="${mutedColor}">${v.toFixed(yDecimals)}</text>`;
+      gridSvg += `<text x="${padL - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="${mutedColor}">${v.toFixed(yDecimals)}</text>`;
     }
   } else {
     const yTicks = 4;
@@ -828,7 +845,7 @@ function renderLineChart(container, series, opts) {
       // gridline and loses its label.
       const label = v.toFixed(yDecimals);
       if (label !== lastLabel) {
-        gridSvg += `<text x="${padL - 8}" y="${yy + 3}" text-anchor="end" font-size="10" fill="${mutedColor}">${label}</text>`;
+        gridSvg += `<text x="${padL - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="${mutedColor}">${label}</text>`;
         lastLabel = label;
       }
     }
@@ -843,16 +860,18 @@ function renderLineChart(container, series, opts) {
     const ry = y(refLine.value);
     refLineSvg = `<line x1="${padL}" x2="${width - padR}" y1="${ry}" y2="${ry}" stroke="${mutedColor}" stroke-width="1" stroke-dasharray="4,3" />`;
     if (refLine.label) {
-      refLineSvg += `<text x="${width - padR}" y="${ry - 4}" text-anchor="end" font-size="10" fill="${mutedColor}">${refLine.label}</text>`;
+      refLineSvg += `<text x="${width - padR}" y="${ry - 4}" text-anchor="end" font-size="11" fill="${mutedColor}">${refLine.label}</text>`;
     }
   }
 
-  const xTicks = 5;
+  // Five labels fit 960px and nothing like it at phone width, where the
+  // same five ran into each other and read as one smear.
+  const xTicks = width < 420 ? 3 : width < 700 ? 4 : 5;
   let xAxisSvg = "";
   for (let i = 0; i <= xTicks; i++) {
     const t = tMin + ((tMax - tMin) * i) / xTicks;
     const xx = x(t);
-    xAxisSvg += `<text x="${xx}" y="${height - 6}" text-anchor="middle" font-size="10" fill="${mutedColor}">${formatTick(new Date(t), visibleHours)}</text>`;
+    xAxisSvg += `<text x="${xx}" y="${height - 6}" text-anchor="middle" font-size="11" fill="${mutedColor}">${formatTick(new Date(t), visibleHours)}</text>`;
   }
 
   function pathFor(points) {
@@ -1082,7 +1101,7 @@ function categoryFor(status) {
 // over time, sharing the same time axis convention as renderLineChart so it
 // lines up visually with the charts above/below it.
 function renderStatusTimeline(container, points, opts) {
-  const { width = 960, height = 60, hours } = opts;
+  const { width = chartWidth(container), height = 60, hours } = opts;
   const padL = 44, padR = 12, padT = 6, padB = 22;
   const innerW = width - padL - padR;
   const barY = padT;
@@ -1107,11 +1126,13 @@ function renderStatusTimeline(container, points, opts) {
   });
 
   const mutedColor = cssVar("--text-muted");
-  const xTicks = 5;
+  // Five labels fit 960px and nothing like it at phone width, where the
+  // same five ran into each other and read as one smear.
+  const xTicks = width < 420 ? 3 : width < 700 ? 4 : 5;
   let xAxisSvg = "";
   for (let i = 0; i <= xTicks; i++) {
     const t = tMin + ((tMax - tMin) * i) / xTicks;
-    xAxisSvg += `<text x="${x(t)}" y="${height - 6}" text-anchor="middle" font-size="10" fill="${mutedColor}">${formatTick(new Date(t), hours)}</text>`;
+    xAxisSvg += `<text x="${x(t)}" y="${height - 6}" text-anchor="middle" font-size="11" fill="${mutedColor}">${formatTick(new Date(t), hours)}</text>`;
   }
 
   container.innerHTML = `
@@ -1367,6 +1388,10 @@ function main() {
   setupRangeButtons();
   fetchLive();
   fetchHistory(currentHours);
+  // Charts are sized to the container at draw time, so a rotated phone has
+  // to redraw. Refetching is a local request and rebuilds every series on
+  // the page, including the ones assembled inside fetchHistory.
+  onViewportResize(() => fetchHistory(currentHours));
   setInterval(fetchLive, 30000);
   setInterval(() => fetchHistory(currentHours), 60000);
 }

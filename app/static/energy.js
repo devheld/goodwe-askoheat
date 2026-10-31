@@ -114,16 +114,20 @@ function drawYGrid(svg, y, left, right, { decimals = 0, zeroLine = false } = {})
       .attr("x", left - 8)
       .attr("y", yy + 3)
       .attr("text-anchor", "end")
-      .attr("font-size", 10)
+      .attr("font-size", 11)
       .attr("fill", cssVar("--text-muted"))
       .text(v.toFixed(decimals));
   }
 }
 
 function drawXLabels(svg, band, buckets, grain, baselineY) {
-  // Thin the labels out rather than rotating them: a month of days at 10px
-  // would otherwise collide.
-  const every = Math.max(1, Math.ceil(buckets.length / 12));
+  // Thin the labels out rather than rotating them: a month of days would
+  // otherwise collide. How many fit comes from the band's own range - the
+  // plot's actual width in pixels - rather than from a count that assumed
+  // the chart was always 960 wide.
+  const [left, right] = band.range();
+  const slots = Math.max(2, Math.floor((right - left) / 58));
+  const every = Math.max(1, Math.ceil(buckets.length / slots));
   svg
     .append("g")
     .selectAll("text")
@@ -132,7 +136,7 @@ function drawXLabels(svg, band, buckets, grain, baselineY) {
     .attr("x", (d) => band(d.bucket) + band.bandwidth() / 2)
     .attr("y", baselineY + 14)
     .attr("text-anchor", "middle")
-    .attr("font-size", 10)
+    .attr("font-size", 11)
     .attr("fill", cssVar("--text-muted"))
     .text((d) => bucketLabel(d.bucket, grain));
 }
@@ -360,7 +364,7 @@ function renderLosses(energy) {
     return;
   }
 
-  const width = 960;
+  const width = chartWidth(container);
   const height = 240;
   const padL = 48, padR = 12, padT = 12, padB = 28;
   const svg = newSvg(container, width, height);
@@ -451,7 +455,7 @@ function renderStack(energy) {
   }
 
   const visible = CONSUMERS.filter((c) => !state.hidden.has(c.key));
-  const width = 960;
+  const width = chartWidth(container);
   const height = 300;
   const padL = 48, padR = 12, padT = 12, padB = 28;
 
@@ -621,7 +625,7 @@ function renderRoof(energy) {
     return;
   }
 
-  const width = 960;
+  const width = chartWidth(container);
   const height = 240;
   const padL = 48, padR = 12, padT = 12, padB = 28;
 
@@ -746,7 +750,7 @@ function renderGrid(energy) {
     return;
   }
 
-  const width = 960;
+  const width = chartWidth(container);
   const height = 220;
   const padL = 48, padR = 12, padT = 12, padB = 28;
   const svg = newSvg(container, width, height);
@@ -836,7 +840,7 @@ function renderDonut(energy) {
     return;
   }
 
-  const width = 960;
+  const width = chartWidth(container);
   const height = 240;
   const radius = Math.min(height, 420) / 2 - 10;
   const svg = newSvg(container, width, height);
@@ -894,6 +898,10 @@ function renderDonut(energy) {
 // --- wallbox sessions --------------------------------------------------------
 
 // --- wiring ------------------------------------------------------------------
+
+// Charts are sized to their container at draw time, so a rotated phone or a
+// resized window redraws from the data already in hand.
+onViewportResize(() => renderEnergy());
 
 function renderEnergy() {
   if (!state.energy) return;

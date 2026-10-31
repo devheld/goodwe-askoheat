@@ -33,9 +33,16 @@ function renderSessions(payload) {
     s.measured ? "--series-wallbox-meter" : "--series-wallbox";
 
   const rowH = 26;
-  const width = 960;
+  const width = chartWidth(container);
   const height = sessions.length * rowH + 30;
-  const padL = 150, padR = 60, padT = 8;
+  // The date gutter and the value label are both text, so their room is
+  // measured in characters rather than in a share of the width. At phone
+  // width the full 150px gutter took 43% of the chart and the value label
+  // ran off the right edge, so both get shorter instead of smaller.
+  const narrow = width < 560;
+  const padL = narrow ? 88 : 150;
+  const padR = narrow ? 58 : 60;
+  const padT = 8;
   const svg = newSvg(container, width, height);
 
   const x = d3
@@ -53,7 +60,22 @@ function renderSessions(payload) {
       .attr("text-anchor", "end")
       .attr("font-size", 11)
       .attr("fill", cssVar("--text-secondary"))
-      .text(start.toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }));
+      .text(
+        narrow
+          ? start.toLocaleString("en-GB", {
+              day: "2-digit",
+              month: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : start.toLocaleString("en-GB", {
+              weekday: "short",
+              day: "2-digit",
+              month: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+      );
 
     const w = Math.max(2, x(s.energy_kwh) - padL);
     svg
@@ -91,7 +113,13 @@ function renderSessions(payload) {
       .attr("y", y + rowH / 2 + 3)
       .attr("font-size", 11)
       .attr("fill", cssVar("--text-secondary"))
-      .text(`${fmt(s.energy_kwh, 1)} kWh (${cost(s.energy_kwh)})`);
+      // The cost is in the tooltip and in the table either way, so the
+      // label that does not fit is the one that goes.
+      .text(
+        narrow
+          ? `${fmt(s.energy_kwh, 1)} kWh`
+          : `${fmt(s.energy_kwh, 1)} kWh (${cost(s.energy_kwh)})`
+      );
   });
 
   table.innerHTML = `
@@ -234,6 +262,7 @@ async function loadSessions() {
       fetch(`/api/wallbox/events?days=${SESSION_DAYS}&limit=50`).then((r) => r.json()),
       fetch(`/api/wallbox/crosscheck?days=${SESSION_DAYS}`).then((r) => r.json()),
     ]);
+    lastPayloads = { runs: sessions, compare: crosscheck };
     renderSessions(sessions);
     renderEvents(events);
     renderCrosscheck(crosscheck);
@@ -246,6 +275,15 @@ async function loadSessions() {
 // The prices come with the live payload, which app.js is already fetching -
 // so the first draw waits for it instead of asking the service a third
 // time for the same three numbers.
+// Charts are sized to their container at draw time, so a rotated phone
+// redraws. The payloads are kept rather than refetched.
+let lastPayloads = null;
+onViewportResize(() => {
+  if (!lastPayloads) return;
+  renderSessions(lastPayloads.runs);
+  renderCrosscheck(lastPayloads.compare);
+});
+
 let sessionsStarted = false;
 window.onLiveData = (latest) => {
   setTariff(latest.tariff);

@@ -89,6 +89,32 @@ function tipRows(title, rows) {
   return `<div class="tt-title">${title}</div>${body}`;
 }
 
+// Charts are drawn in CSS pixels: one unit of the coordinate system is one
+// pixel on screen. This is not cosmetic. A viewBox wider than the element it
+// renders into scales everything inside it down, text included - and the
+// fixed 960-unit box these charts used to be drawn in, inside the ~350px
+// content column of a phone, is a factor of 0.36. An 11px axis label came
+// out at 4px, which is why nothing on a chart could be read on an iPhone.
+//
+// So the width comes from the element, measured at draw time. 260 is a floor
+// for a container that is narrower than any phone, and the fallback covers a
+// container that is still hidden when it is drawn and therefore measures 0 -
+// there the old behaviour is the right thing to fall back to.
+function chartWidth(container, fallback = 960) {
+  const w = container && container.clientWidth ? Math.round(container.clientWidth) : 0;
+  return Math.max(w || fallback, 260);
+}
+
+// Width is read at draw time, so a rotated phone or a resized window needs a
+// redraw. Debounced: a window drag fires this continuously.
+function onViewportResize(redraw) {
+  let timer = null;
+  window.addEventListener("resize", () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(redraw, 200);
+  });
+}
+
 function newSvg(container, width, height) {
   container.innerHTML = "";
   const svg = d3
