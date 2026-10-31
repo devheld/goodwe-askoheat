@@ -229,6 +229,7 @@ class SurplusController:
                 # Configuration, not a measurement: the labels stay even
                 # when there is nothing to label.
                 "pv_string_names": list(self._settings.pv_string_names),
+                "heatpump_max_kw": self._settings.heatpump_max_kw or None,
                 "devices": self._device_health(inverter_error=error),
             }
 
@@ -662,6 +663,7 @@ class SurplusController:
                 "balance_gap_kw": balance_gap_kw,
                 "wallbox": wallbox,
                 "shelly": shelly,
+                "heatpump_max_kw": self._settings.heatpump_max_kw or None,
                 "devices": self._device_health(),
             }
 

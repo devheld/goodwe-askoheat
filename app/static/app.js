@@ -554,7 +554,7 @@ function renderHeatpump(points, hours) {
     return;
   }
   card.hidden = false;
-  renderLineChart(el("heatpumpChartWrap"), [
+  const series = [
     {
       name: "Heat Pump",
       color: "--series-heatpump",
@@ -566,7 +566,31 @@ function renderHeatpump(points, hours) {
             : p.heatpump_kw,
       })),
     },
-  ], { hours, height: 180, unit: "kW", yMin: 0 });
+  ];
+  // Fixed to what the pump can draw (HEATPUMP_MAX_KW), so the curve says
+  // how hard it is working rather than being rescaled to the busiest
+  // minute on screen - at which point a quiet night looks like a cold one.
+  // Taken as a floor, never a ceiling: anything above it lifts the axis
+  // instead of being cut off, so a wrong setting can never hide a peak.
+  const ceiling = lastLatest.heatpump_max_kw || 0;
+  const opts = { hours, height: 180, unit: "kW", yMin: 0 };
+  if (ceiling > 0) {
+    let peak = 0;
+    for (const p of series[0].points) {
+      if (p.v !== null && p.v > peak) peak = p.v;
+    }
+    opts.yMax = Math.max(ceiling, Math.ceil(peak * 10) / 10);
+  }
+  renderLineChart(el("heatpumpChartWrap"), series, opts);
+  const note = el("heatpumpNote");
+  if (note) {
+    note.textContent = ceiling > 0
+      ? `Measured by its own clamp meter on the pump's feed - not the house ` +
+        `load with everything else subtracted off it. The axis runs to ` +
+        `${fmt(ceiling, 1)} kW, what the pump draws flat out.`
+      : "Measured by its own clamp meter on the pump's feed - not the house " +
+        "load with everything else subtracted off it.";
+  }
 }
 
 function renderPower() {

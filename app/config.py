@@ -66,6 +66,14 @@ class Settings:
     shelly_port: int
     shelly_timeout_s: float
 
+    # What the heat pump draws flat out, for the chart's y axis. A curve
+    # measured against the machine's own ceiling says how hard it is
+    # working; one rescaled to its own maximum every time only says what
+    # happened to be the busiest minute on screen. 0 turns it off and the
+    # axis follows the data again. It never clips: a reading above the
+    # ceiling pushes the axis up rather than disappearing.
+    heatpump_max_kw: float
+
     # One label per connected MPPT input, in order. How many entries there
     # are is how many inputs the dashboard shows, because how many are
     # wired up is a fact about the roof and not something to infer from a
@@ -201,6 +209,7 @@ def load_settings() -> Settings:
         # clock, and a meter that is slow to answer must not hold up the
         # heater decision behind it.
         shelly_timeout_s=float(os.environ.get("SHELLY_TIMEOUT_S", "3")),
+        heatpump_max_kw=float(os.environ.get("HEATPUMP_MAX_KW", "0")),
         pv_string_names=_pv_string_names(),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
