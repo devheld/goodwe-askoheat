@@ -842,7 +842,15 @@ function renderDonut(energy) {
 
   const width = chartWidth(container);
   const height = 240;
-  const radius = Math.min(height, 420) / 2 - 10;
+  // A ring with labels around it needs room on both sides for text, and at
+  // phone width there is none: "Household 83%" is 77px of it, twice, around
+  // a 309px chart. So the ring gives up some radius and the labels give up
+  // their names - which are in the legend directly above, so identity still
+  // does not rest on colour alone.
+  const narrow = width < 560;
+  const radius = narrow
+    ? Math.min(height, width - 120) / 2 - 10
+    : Math.min(height, 420) / 2 - 10;
   const svg = newSvg(container, width, height);
   const g = svg.append("g").attr("transform", `translate(${width / 2}, ${height / 2})`);
 
@@ -867,22 +875,23 @@ function renderDonut(energy) {
     })
     .on("mouseleave", hideTip);
 
+  // The hole shrinks with the ring, so the number inside it has to as well.
   g.append("text")
     .attr("text-anchor", "middle")
-    .attr("y", -4)
-    .attr("font-size", 24)
+    .attr("y", narrow ? -3 : -4)
+    .attr("font-size", narrow ? 18 : 24)
     .attr("font-weight", 600)
     .attr("fill", cssVar("--text-primary"))
     .text(`${fmt(total)} kWh`);
   g.append("text")
     .attr("text-anchor", "middle")
-    .attr("y", 16)
-    .attr("font-size", 12)
+    .attr("y", narrow ? 13 : 16)
+    .attr("font-size", narrow ? 10 : 12)
     .attr("fill", cssVar("--text-secondary"))
-    .text("total consumption");
+    .text(narrow ? "total" : "total consumption");
 
-  // Direct labels: with three slices there is room, so identity never rests
-  // on colour alone.
+  // Direct labels: with four slices there is room for them, and on a narrow
+  // chart for the share without the name.
   const labelArc = d3.arc().innerRadius(radius + 14).outerRadius(radius + 14);
   g.selectAll("text.slice")
     .data(pie(data))
@@ -892,7 +901,11 @@ function renderDonut(energy) {
     .attr("text-anchor", (d) => ((d.startAngle + d.endAngle) / 2 > Math.PI ? "end" : "start"))
     .attr("font-size", 11)
     .attr("fill", cssVar("--text-secondary"))
-    .text((d) => `${d.data.name} ${fmt((100 * d.data.value) / total, 0)}%`);
+    .text((d) =>
+      narrow
+        ? `${fmt((100 * d.data.value) / total, 0)}%`
+        : `${d.data.name} ${fmt((100 * d.data.value) / total, 0)}%`
+    );
 }
 
 // --- wallbox sessions --------------------------------------------------------
