@@ -36,6 +36,12 @@ class Settings:
     # charger has one free Modbus slot and the owner's app needs it
     # too, so this reader takes it briefly and rarely.
     wallbox_poll_interval_s: int
+    # Two ways to answer "is a car drawing right now", which is the one
+    # question that decides whether the charger may be read. The clamp meter
+    # on its feed answers it directly and is used whenever it is there;
+    # wallbox_busy_load_kw is the old answer, inferred from the household
+    # load, and stays as the fallback for a meter that is away.
+    wallbox_meter_busy_kw: float
     wallbox_busy_load_kw: float
     wallbox_idle_ticks: int
     wallbox_idle_poll_interval_s: int
@@ -178,6 +184,17 @@ def load_settings() -> Settings:
         wallbox_slave_id=int(os.environ.get("WALLBOX_SLAVE_ID", "247")),
         wallbox_poll_interval_s=int(
             os.environ.get("WALLBOX_POLL_INTERVAL_S", "300")
+        ),
+        # Power on the charger's own feed that means a car is drawing. The
+        # charger's standby was measured here at 4-7W with nothing plugged
+        # in, and the smallest charge it can deliver is a single-phase car at
+        # the 6A minimum, 1.38kW. 0.1kW sits twenty times above the one and
+        # fourteen times below the other, which is the whole reason the clamp
+        # replaced the household-load estimate: that estimate had to be set
+        # at 3.0kW to stay clear of a kettle, and so could not see a
+        # single-phase charge at all.
+        wallbox_meter_busy_kw=float(
+            os.environ.get("WALLBOX_METER_BUSY_KW", "0.1")
         ),
         # Household load above the heater that means a car is drawing, and
         # therefore that the charger must not be touched. See

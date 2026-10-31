@@ -80,8 +80,10 @@ while a running one is left to the AskoHeat's own ~65°C cutoff.
 - `app/shelly_client.py` - `ShellyClient`: reads a Shelly 3EM over HTTP, one
   instance per clamp meter. At the grid connection point it is a second,
   independent meter and the only instrument here that measures the RMS
-  current through the main fuse; on the heat pump's and the charger's feed it
-  measures loads that nothing else here can see
+  current through the main fuse; on the heat pump's feed it measures a load
+  nothing else here can see; on the charger's feed it measures a load that
+  could not be measured even in principle, because reading the charger stops
+  it (sections 7 and 10)
 - `app/database.py` - `HistoryStore`: SQLite persistence for the dashboard's
   history charts
 - `app/main.py` - FastAPI app serving `/api/live`, `/api/history`, and the
@@ -268,11 +270,16 @@ without a break, against a previous best of 3.6 minutes across four days of
 recorded data.
 
 `SurplusController._poll_wallbox` now skips the read entirely while a car is
-drawing. What counts as drawing is the household load above the heater,
-compared against `WALLBOX_BUSY_LOAD_KW` (3.0 kW by default - above a house
-base load, below a three-phase car at the 6 A minimum of 4.14 kW). Between
-skipped polls the last snapshot is reused and the dashboard says why it is
-standing still.
+drawing. Between skipped polls the last snapshot is reused and the dashboard
+says why it is standing still.
+
+What counts as drawing has since changed instrument - see section 10. It was
+the household load above the heater, compared against `WALLBOX_BUSY_LOAD_KW`
+(3.0 kW by default - above a house base load, below a three-phase car at the
+6 A minimum of 4.14 kW), which remains the fallback. It is now a clamp meter
+on the charger's own feed and `WALLBOX_METER_BUSY_KW` (0.1 kW), which
+measures the car directly. The three paragraphs below describe the inferred
+gate, and are what the clamp made unnecessary rather than what runs.
 
 Three things make that gate hold up in practice:
 
@@ -293,11 +300,12 @@ this box reports status 3 ("Charging") throughout a pause *and* for a
 plugged-in car that has finished, with 0 A on every phase. Only the power
 and the phase currents tell a live charge from a finished one.
 
-Known limitation: a single-phase charge is still interrupted once per
+That left one limitation, and it was the whole reason for the clamp meter: a
+single-phase charge was still interrupted once per
 `WALLBOX_IDLE_POLL_INTERVAL_S`, costing roughly 10% of its throughput
-against 39% before. Closing that gap entirely would mean lowering
-`WALLBOX_BUSY_LOAD_KW` into the range of ordinary household appliances,
-which would suspend polling for an oven.
+against 39% before. Closing the gap with the household load was impossible -
+it would have meant lowering `WALLBOX_BUSY_LOAD_KW` into the range of
+ordinary household appliances, suspending polling for an oven.
 
 **Both strategies are kept, and `WALLBOX_POLL_MODE` picks one.** `gated` is
 the above. `direct` reads the charger every `WALLBOX_POLL_INTERVAL_S`
@@ -539,6 +547,67 @@ Two lessons worth keeping:
   version of this balanced to the counter and looked finished. What found the
   errors was being told that 12:37 was not a car, and that an 11 kW box
   cannot deliver 102 kW.
+
+### 10. A clamp meter on the charger's feed, and what it made obsolete
+
+Sections 7 and 9 are both consequences of one fact: the charger cannot be
+asked how much it is delivering while it is delivering. Everything they
+describe - the gate inferred from the household load, the counter
+increments spread backwards over the samples that probably held the charge,
+the threshold that could not see a single-phase car - is work done to avoid
+needing a measurement that did not exist.
+
+On 31 Oct 2026 a third Shelly 3EM went onto the charger's feed, and it does.
+
+**The gate.** `WALLBOX_METER_BUSY_KW` replaces `WALLBOX_BUSY_LOAD_KW`
+wherever the meter answers. The numbers say why that is not a small change:
+the charger's standby is 4-7 W, and the smallest charge it can deliver is a
+single-phase car at the 6 A minimum, 1.38 kW. A threshold of 0.1 kW sits
+twenty times above the one and fourteen times below the other. The household
+estimate had to sit at 3.0 kW to keep an oven out, so it could not see that
+charge at all - and it counted the oven as a car. The clamp measures the car
+and nothing else, on the same tick as the decision. The hysteresis
+(`WALLBOX_IDLE_TICKS`) stays: the clamp sees a pause clearly, but what a
+pause means to the car is unchanged.
+
+**The energy.** `wallbox_meter_kw` is integrated like any other power
+column. No counter, no weighting, no `_charge_block` walking backwards from
+an observation. The three limitations at the end of section 9 - an oven
+inside a charge taking a share, a charge shorter than the gap between two
+reads landing with no power attached, derived power capped at the house load
+- do not apply to a sample that was measured. The machinery stays in
+`_wallbox_series` because the history it explains is still in the database,
+and every sample carries `metered` so a measured session and a reconstructed
+one are never presented as the same kind of fact. The session list says
+which each one is.
+
+**Does the charger's Modbus still earn its slot?** It no longer carries a
+single number the dashboard depends on. What it still answers, and the clamp
+cannot:
+
+- whether anything is plugged in at all, and which RFID card it was
+- the charge mode (fast / PV surplus / PV + battery) and the configured
+  power limit - the settings, as opposed to their effect
+- its own lifetime counter, register 10065, as a second witness to the
+  energy
+- the hardware's own description of itself: 22 kW, three-phase, phase
+  switching enabled
+
+All of that is description rather than measurement, and description does not
+change while a car charges - which is precisely when the box must not be
+read. The two constraints no longer collide, so the reader stays, demoted:
+read on its slow clock, gated by the clamp, and labelled on the page as the
+charger's own account rather than as the measurement.
+
+**Do the three witnesses agree?** `/api/wallbox/crosscheck` compares them
+over the record and the wallbox page shows the result. As of the first 74
+minutes: the clamp reads 5 W of standby where the charger reports 0.0 kW,
+which agrees as far as a register quantised to 0.1 kW can agree, and the two
+counters differ by 8 Wh, which is below the charger's own 0.1 kWh
+resolution. Both are consistent and neither is informative. The comparison
+that will settle it needs a charge, and it is the counters: both are
+cumulative, so differencing them over a window is independent of how often
+either was read.
 
 ## Setup
 

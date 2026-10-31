@@ -146,6 +146,7 @@ class HistoryStore:
         zero_threshold_kw: float = 0.05,
         wallbox_busy_load_kw: float = 3.0,
         wallbox_idle_ticks: int = 5,
+        wallbox_meter_busy_kw: float = 0.1,
     ) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
@@ -159,6 +160,10 @@ class HistoryStore:
         # same meaning. See _charge_block.
         self._wallbox_busy_load_kw = wallbox_busy_load_kw
         self._wallbox_idle_ticks = wallbox_idle_ticks
+        # And for the part of the history that has a clamp meter behind it,
+        # where none of that inference is needed: there a charge only has to
+        # be told apart from the charger's own standby.
+        self._wallbox_meter_busy_kw = wallbox_meter_busy_kw
         self._battery_full_soc_pct = battery_full_soc_pct
         self._heating_start_max_temp_c = heating_start_max_temp_c
         self._step_max = step_max
@@ -380,9 +385,12 @@ class HistoryStore:
         between two polls, and it is the only option for the AskoHeat and the
         house load, neither of which exposes a counter.
 
-        The charger is the exception - it has a counter and that counter is
-        used instead, because integrating its power samples was wrong in both
-        directions. See _wallbox_series.
+        The charger used to be the exception, because integrating its own
+        power samples was wrong in both directions and its counter was the
+        only trustworthy number it had. Since 31 Oct 2026 it is the
+        best-measured load in the house: a clamp meter on its feed, read
+        every tick like any other. The counter remains behind the history
+        from before that. See _wallbox_series.
         """
         spec = PERIODS.get(period) or PERIODS["today"]
         since = period_start(period)
@@ -477,11 +485,12 @@ class HistoryStore:
             "loss_curtailed",
             "hours",
         )
-        # Not in the SQL above because neither figure comes from the power
-        # samples any more: the charger's energy comes from its own counter,
-        # placed in time by the house load (see _wallbox_series), and the
-        # rest of the house is what is left once the heater and the car are
-        # taken off the measured consumption.
+        # Not in the SQL above because the charger's series spans two eras
+        # and needs Python to walk it: measured from its clamp meter where
+        # there is one, reconstructed from its counter before that (see
+        # _wallbox_series). The rest of the house is then what is left once
+        # the heater, the pump and the car are taken off the measured
+        # consumption.
         wallbox = self._wallbox_energy_by_bucket(spec["fmt"], since)
         for row in rows:
             row["wallbox"] = wallbox.get(row["bucket"], 0.0)
@@ -727,28 +736,42 @@ class HistoryStore:
         }
 
     def _wallbox_series(self, since_iso: str, fmt: str = "%Y-%m-%d") -> list[dict]:
-        """Per-sample charger energy: how much from its counter, when from the
-        house load.
+        """Per-sample charger energy. Measured where there is a meter,
+        reconstructed where there is not.
 
-        The charger's recorded power cannot be integrated, and it was a mistake
-        to do it. The box is polled on a slow clock and not at all while a car
-        is drawing (README section 7), so one five-minute snapshot got repeated
-        into every 70s row: across ten days that overstated the energy by a
-        factor of 2.5 against the charger's own counter. Since the poll gate
-        exists the samples read 0 throughout a charge instead, which is how two
-        days of charging came to show up as nothing at all.
+        Two eras, and every sample says which one it is in.
 
-        Register 10065 is cumulative and exact - 78.1 kWh before a charge, 88.0
-        kWh after, with no read in between - so the counter sets the scale.
-        What it cannot say is when the energy flowed, because it is only ever
-        observed after the fact. That comes from the only other witness, the
-        house load above the heater: on 27 Oct 2026 it tracked a one-hour
-        charge at 11 kW to within 11% of the counter's 9.9 kWh.
+        **From 31 Oct 2026**: a Shelly 3EM clamp sits on the charger's feed
+        and wallbox_meter_kw is an ordinary measurement of the car, taken on
+        every tick whatever the charger is doing. It is integrated like any
+        other power column and nothing below it applies - no counter, no
+        weighting, no inference. The charger's own counter is deliberately
+        dropped from the arithmetic for these samples rather than averaged
+        in: the two describe the same energy, and the one that has to be
+        guessed at must not get a second vote.
 
-        So each increment is spread over the samples since the previous
-        observation. A span where the counter did not move contributes nothing,
-        which also means charging from before the counter worked (it read a
-        flat 0.0 until 23 Oct 2026) is absent rather than guessed at.
+        **Before that**, the only numbers were the charger's own, and its
+        recorded power cannot be integrated. The box is polled on a slow
+        clock and not at all while a car is drawing (README section 7), so
+        one five-minute snapshot got repeated into every 70s row: across ten
+        days that overstated the energy by a factor of 2.5 against the
+        charger's own counter. Since the poll gate exists the samples read 0
+        throughout a charge instead, which is how two days of charging came
+        to show up as nothing at all.
+
+        Register 10065 is cumulative and exact - 78.1 kWh before a charge,
+        88.0 kWh after, with no read in between - so the counter set the
+        scale. What it could not say is when the energy flowed, because it is
+        only ever observed after the fact. That came from the only other
+        witness, the house load above the heater: on 27 Oct 2026 it tracked a
+        one-hour charge at 11 kW to within 11% of the counter's 9.9 kWh. So
+        each increment is spread over the samples since the previous
+        observation. A span where the counter did not move contributes
+        nothing, which also means charging from before the counter worked (it
+        read a flat 0.0 until 23 Oct 2026) is absent rather than guessed at.
+
+        That machinery stays because the history it explains is still in the
+        database. It applies to no new sample.
         """
         with self._connect() as conn:
             rows = conn.execute(
@@ -757,6 +780,7 @@ class HistoryStore:
                        strftime(?, timestamp, 'localtime') AS bucket,
                        MAX(consumption_kw
                            - MAX(COALESCE(heater_load_w, 0), 0) / 1000.0, 0) AS house_kw,
+                       wallbox_meter_kw,
                        wallbox_energy_kwh
                 FROM readings
                 WHERE timestamp >= ?
@@ -772,24 +796,45 @@ class HistoryStore:
 
         for row in rows:
             ts = datetime.fromisoformat(row["timestamp"])
+            hours = (
+                0.0
+                if previous_ts is None
+                else min(
+                    (ts - previous_ts).total_seconds() / 3600.0,
+                    MAX_SAMPLE_SPAN_H,
+                )
+            )
+            metered = row["wallbox_meter_kw"] is not None
+            # A negative reading on a load means a clamp on backwards, not a
+            # car exporting, so it contributes nothing rather than
+            # subtracting energy from the day.
+            measured_kw = max(row["wallbox_meter_kw"], 0.0) if metered else 0.0
             series.append(
                 {
                     "timestamp": row["timestamp"],
                     "bucket": row["bucket"],
                     "house_kw": row["house_kw"] or 0.0,
-                    "hours": (
-                        0.0
-                        if previous_ts is None
-                        else min(
-                            (ts - previous_ts).total_seconds() / 3600.0,
-                            MAX_SAMPLE_SPAN_H,
-                        )
-                    ),
-                    "kwh": 0.0,
-                    "kw": 0.0,
+                    "hours": hours,
+                    # Which era this sample is in, carried all the way out to
+                    # the session list: a measured session and a
+                    # reconstructed one are not the same kind of fact and the
+                    # page says so.
+                    "metered": metered,
+                    "kwh": measured_kw * hours,
+                    "kw": measured_kw,
                 }
             )
             previous_ts = ts
+
+            if metered:
+                # Measured, so there is nothing to reconstruct. Re-basing the
+                # counter here also means an increment observed after a gap
+                # in the meter's coverage is dropped instead of being spread
+                # backwards over samples that already carry their own
+                # measurement.
+                previous_counter = None
+                span_start = len(series)
+                continue
 
             counter = row["wallbox_energy_kwh"]
             if counter is None:
@@ -927,20 +972,115 @@ class HistoryStore:
                 )
         return buckets
 
+    def wallbox_crosscheck(self, since_iso: str) -> dict:
+        """Do the charger and the clamp on its feed agree?
+
+        Three independent witnesses to the same energy, and this compares
+        what can be compared:
+
+        * **power** - the clamp against register 10015, on samples where both
+          were recorded. Only ever while no car is drawing, because that is
+          the only time the charger is read at all, and the register is
+          quantised to 0.1 kW, which is twenty times coarser than the clamp.
+          So agreement here pins the zero point and nothing else.
+        * **energy** - the clamp's own counter against register 10065, both
+          cumulative, differenced over the window. This is the real check and
+          it needs a charge to say anything: the register's resolution is 0.1
+          kWh, so standby alone will never move it.
+        * **standby** - what the charger draws with nothing plugged in. The
+          clamp can see it; the register cannot resolve it at all.
+
+        Nothing is judged here. The numbers come out and the page says what
+        they do and do not establish.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT timestamp, wallbox_meter_kw, wallbox_power_kw,
+                       wallbox_meter_energy_kwh, wallbox_energy_kwh
+                FROM readings
+                WHERE timestamp >= ? AND wallbox_meter_kw IS NOT NULL
+                ORDER BY timestamp ASC
+                """,
+                (since_iso,),
+            ).fetchall()
+
+        diffs: list[float] = []
+        standby: list[float] = []
+        meter_counter: list[tuple[str, float]] = []
+        charger_counter: list[tuple[str, float]] = []
+
+        for row in rows:
+            clamp = row["wallbox_meter_kw"]
+            register = row["wallbox_power_kw"]
+            if register is not None:
+                diffs.append(clamp - register)
+                # "Nothing plugged in" is the charger's own word for it
+                # (status 0), not an inference from the power being small.
+                if (register or 0) == 0:
+                    standby.append(clamp)
+            if row["wallbox_meter_energy_kwh"] is not None:
+                meter_counter.append((row["timestamp"], row["wallbox_meter_energy_kwh"]))
+            if row["wallbox_energy_kwh"] is not None:
+                charger_counter.append((row["timestamp"], row["wallbox_energy_kwh"]))
+
+        def span(counter: list[tuple[str, float]]) -> dict | None:
+            if len(counter) < 2:
+                return None
+            first, last = counter[0], counter[-1]
+            hours = (
+                datetime.fromisoformat(last[0]) - datetime.fromisoformat(first[0])
+            ).total_seconds() / 3600.0
+            return {
+                "from": first[0],
+                "to": last[0],
+                "hours": round(hours, 2),
+                "kwh": round(last[1] - first[1], 3),
+            }
+
+        return {
+            "metered_samples": len(rows),
+            "metered_from": rows[0]["timestamp"] if rows else None,
+            # Where both were recorded on the same tick.
+            "power_samples": len(diffs),
+            "power_mean_diff_kw": (
+                round(sum(diffs) / len(diffs), 4) if diffs else None
+            ),
+            "power_max_diff_kw": (
+                round(max(diffs, key=abs), 4) if diffs else None
+            ),
+            "register_resolution_kw": 0.1,
+            "register_resolution_kwh": 0.1,
+            "standby_kw": (
+                round(sorted(standby)[len(standby) // 2], 4) if standby else None
+            ),
+            "standby_samples": len(standby),
+            "meter_counter": span(meter_counter),
+            "charger_counter": span(charger_counter),
+        }
+
     def wallbox_sessions(self, since_iso: str, gap_minutes: int = 15) -> list[dict]:
         """Contiguous charging runs.
 
-        Rebuilt from the counter-scaled series rather than from the charger's
-        own status flag. The flag reads "Charging" for a plugged-in car that
-        has finished and stays there with 0A on every phase, so a one-hour
-        charge on 27 Oct 2026 showed up as a 63-minute session starting two
-        minutes after it ended, carrying 0 kWh. The series puts the energy
-        where the house load was, which is where the car was.
+        Taken from the clamp meter on the charger's feed where there is one,
+        which is from 31 Oct 2026 - so start, end, duration, energy and peak
+        are all measured, at the resolution of the sampling interval.
 
-        A session still ends when the samples stop for longer than
-        gap_minutes, so a service restart mid-charge does not read as one long
-        session with a hole in it. peak_kw is derived, not measured: the
-        charger cannot be read while it is delivering anything.
+        Never from the charger's own status flag, in either era. The flag
+        reads "Charging" for a plugged-in car that has finished and stays
+        there with 0A on every phase, so a one-hour charge on 27 Oct 2026
+        showed up as a 63-minute session starting two minutes after it ended,
+        carrying 0 kWh.
+
+        Before the clamp, the runs are reconstructed from the charger's
+        counter placed in time by the house load (see _wallbox_series), and
+        peak_kw there is derived rather than measured - the charger cannot be
+        read while it is delivering anything. Each session carries "measured"
+        so the two are never presented as the same kind of fact.
+
+        A session ends when the samples stop for longer than gap_minutes, so
+        a service restart mid-charge does not read as one long session with a
+        hole in it.
         """
         return [
             session
@@ -957,7 +1097,15 @@ class HistoryStore:
         gap = timedelta(minutes=gap_minutes)
 
         for sample in self._wallbox_series(since_iso):
-            if not sample["kwh"]:
+            if sample["metered"]:
+                # The clamp sees the charger's own standby too - measured at
+                # 4-7W with nothing plugged in - so a measured sample needs
+                # the same threshold the live gate applies, not merely "some
+                # energy". Without it every day would be one session 24
+                # hours long.
+                if sample["kw"] < self._wallbox_meter_busy_kw:
+                    continue
+            elif not sample["kwh"]:
                 continue
             ts = datetime.fromisoformat(sample["timestamp"])
             if current is None or previous_ts is None or ts - previous_ts > gap:
@@ -967,12 +1115,18 @@ class HistoryStore:
                     "energy_kwh": 0.0,
                     "peak_kw": 0.0,
                     "samples": 0,
+                    "measured": True,
                 }
                 sessions.append(current)
             current["end"] = sample["timestamp"]
             current["energy_kwh"] += sample["kwh"]
             current["peak_kw"] = max(current["peak_kw"], sample["kw"])
             current["samples"] += 1
+            # One reconstructed sample makes the whole session reconstructed.
+            # A session that straddles the day the clamp went in is the only
+            # way this happens, and the weaker claim is the true one.
+            if not sample["metered"]:
+                current["measured"] = False
             previous_ts = ts
 
         for session in sessions:

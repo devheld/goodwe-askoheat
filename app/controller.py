@@ -70,6 +70,11 @@ class SurplusController:
         self._wallbox_snapshot: dict | None = None
         self._wallbox_polled_at: float | None = None
         self._wallbox_poll_suspended = False
+        # Which witness last answered "is a car drawing": "meter" (the clamp
+        # on the charger's feed), "house" (the household load above the
+        # heater) or "none". Shown on the page, because the two are not
+        # equally trustworthy - see _poll_wallbox.
+        self._wallbox_gate_source = "none"
         # Starts satisfied: a fresh process has not just watched a charge
         # end, so the first quiet tick may read the charger straight away
         # instead of leaving the panel blank for the first six minutes.
@@ -550,18 +555,13 @@ class SurplusController:
             blocked_by_temp,
         )
 
-        # Dashboard-only, and deliberately after the heating decision above so
-        # a slow or unreachable wallbox can never delay or change it. The
-        # client swallows its own errors and reports them as a payload.
-        # Everything drawn above the heater is taken to be the car, which is
-        # what decides whether the charger may be read at all right now - see
-        # _poll_wallbox. heater_load_w is -1 when the AskoHeat failed.
-        wallbox = self._poll_wallbox(
-            readings.consumption_kw - max(heater_load_w, 0) / 1000
-        )
-
-        # Same deal as the wallbox: dashboard and history only, after the
-        # heating decision, errors swallowed into the payload.
+        # Dashboard and history only, deliberately after the heating
+        # decision so a slow or unreachable meter can never delay or change
+        # it. Errors are swallowed into the payload.
+        #
+        # Read before the charger, not after it as these two used to be: the
+        # clamp on the charger's feed is what now decides whether the
+        # charger may be read at all, so its value has to be in hand first.
         shelly = self._poll_shelly_meters() or {}
         # Each meter fills its own columns, so the three series stay apart
         # and a query can never pick up the wrong one. A meter that is not
@@ -570,6 +570,17 @@ class SurplusController:
         at_grid = shelly.get("grid") or {}
         at_heatpump = shelly.get("heatpump") or {}
         at_wallbox = shelly.get("wallbox") or {}
+
+        # Dashboard-only, and after the heating decision for the same reason.
+        # Two witnesses to "is a car drawing", in order of preference: the
+        # clamp on the charger's own feed, and - if that meter is away - the
+        # household load above the heater, which is what this had to make do
+        # with before the clamp existed. heater_load_w is -1 when the
+        # AskoHeat failed. See _poll_wallbox.
+        wallbox = self._poll_wallbox(
+            readings.consumption_kw - max(heater_load_w, 0) / 1000,
+            at_wallbox.get("total_kw") if at_wallbox.get("online") else None,
+        )
 
         timestamp = datetime.now(timezone.utc).isoformat()
         reading = Reading(
@@ -697,7 +708,11 @@ class SurplusController:
             self._shelly_snapshots[role] = client.as_dict()
         return dict(self._shelly_snapshots)
 
-    def _poll_wallbox(self, vehicle_load_kw: float | None = None) -> dict | None:
+    def _poll_wallbox(
+        self,
+        vehicle_load_kw: float | None = None,
+        charger_kw: float | None = None,
+    ) -> dict | None:
         """Read the charger on its own, slower clock - and not at all while a
         car is drawing.
 
@@ -728,6 +743,15 @@ class SurplusController:
         snapshot is reused. The cost is a dashboard panel that freezes
         during a charge; the alternative is a car that charges at 58% duty.
 
+        What has changed is who answers the question. charger_kw is the clamp
+        meter on the charger's own feed and is used whenever it is there: it
+        measures the car and nothing else, at 1W resolution, on the same tick
+        as the decision. vehicle_load_kw - the household load above the
+        heater - remains as the fallback for a meter that is away, and it was
+        never a good witness: it had to be thresholded at 3.0kW to keep an
+        oven out, which left a single-phase car at the 6A minimum (1.38kW)
+        invisible, and it counted any other appliance as a car.
+
         Both strategies are kept and WALLBOX_POLL_MODE picks one. The above
         is "gated". In "direct" the charger is read every
         wallbox_poll_interval_s whatever the house is doing - the behaviour
@@ -756,17 +780,28 @@ class SurplusController:
                 "poll_mode": "direct",
             }
 
-        if vehicle_load_kw is None:
-            # No fresh reading to judge by, so the inverter is unreachable.
-            # Keep whatever the last tick decided rather than risk cutting a
-            # charge that is probably still running.
+        if charger_kw is not None:
+            drawing = charger_kw >= self._settings.wallbox_meter_busy_kw
+            self._wallbox_gate_source = "meter"
+        elif vehicle_load_kw is not None:
+            drawing = vehicle_load_kw >= self._settings.wallbox_busy_load_kw
+            self._wallbox_gate_source = "house"
+        else:
+            drawing = None
+            self._wallbox_gate_source = "none"
+
+        if drawing is None:
+            # Neither witness answered: the clamp is away and the inverter is
+            # unreachable too. Keep whatever the last tick decided rather
+            # than risk cutting a charge that is probably still running.
             busy = self._wallbox_poll_suspended
         else:
-            drawing = vehicle_load_kw >= self._settings.wallbox_busy_load_kw
             self._wallbox_quiet_ticks = 0 if drawing else self._wallbox_quiet_ticks + 1
             # One quiet tick is not the end of a charge - it may be a pause,
             # and reading into a pause is what stops the car coming back.
-            # Wait out wallbox_idle_ticks before calling it over.
+            # Wait out wallbox_idle_ticks before calling it over. The clamp
+            # sees a pause as clearly as it sees a charge, but what the pause
+            # means to the car is unchanged, so the hysteresis stays.
             busy = (
                 drawing
                 or self._wallbox_quiet_ticks < self._settings.wallbox_idle_ticks
@@ -782,11 +817,13 @@ class SurplusController:
                     "poll_suspended": True,
                     "awaiting_first_read": True,
                     "poll_mode": "gated",
+                    "gate_source": self._wallbox_gate_source,
                 }
             return {
                 **self._wallbox_snapshot,
                 "poll_suspended": True,
                 "poll_mode": "gated",
+                "gate_source": self._wallbox_gate_source,
             }
 
         # Any car on the cable is read on a slower clock. Parked, there is
@@ -811,6 +848,7 @@ class SurplusController:
                     **self._wallbox_snapshot,
                     "poll_suspended": True,
                     "poll_mode": "gated",
+                    "gate_source": self._wallbox_gate_source,
                 }
         if self._wallbox_snapshot is None:
             return None
@@ -818,6 +856,7 @@ class SurplusController:
             **self._wallbox_snapshot,
             "poll_suspended": False,
             "poll_mode": "gated",
+            "gate_source": self._wallbox_gate_source,
         }
 
     def _wallbox_poll_due(self, interval: float) -> bool:

@@ -50,6 +50,10 @@ async def lifespan(app: FastAPI):
         # counter reports has to have come from.
         wallbox_busy_load_kw=settings.wallbox_busy_load_kw,
         wallbox_idle_ticks=settings.wallbox_idle_ticks,
+        # And the clamp's own threshold, for the part of the history that
+        # has a clamp behind it: there the charger does not have to be
+        # inferred from anything, only told apart from its own standby.
+        wallbox_meter_busy_kw=settings.wallbox_meter_busy_kw,
     )
     reader = GoodWeModbusReader(
         settings.goodwe_host,
@@ -199,7 +203,25 @@ async def wallbox_sessions(days: int = Query(30, ge=1, le=366)) -> dict:
         "days": days,
         "sessions": sessions,
         "total_kwh": round(sum(s["energy_kwh"] for s in sessions), 3),
+        # Split by which kind of fact they are: measured off the clamp meter,
+        # or reconstructed from the charger's counter before there was one.
+        "measured_kwh": round(
+            sum(s["energy_kwh"] for s in sessions if s.get("measured")), 3
+        ),
+        "measured_count": sum(1 for s in sessions if s.get("measured")),
     }
+
+
+@app.get("/api/wallbox/crosscheck")
+async def wallbox_crosscheck(days: int = Query(30, ge=1, le=366)) -> dict:
+    """The clamp meter against the charger's own registers.
+
+    Separate from the live payload on purpose: this is a question about the
+    record, not about right now, and it is answered by walking the history.
+    """
+    assert store is not None
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return {"days": days, **store.wallbox_crosscheck(since)}
 
 
 @app.get("/api/wallbox/events")

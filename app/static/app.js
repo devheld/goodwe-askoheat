@@ -237,9 +237,11 @@ function renderWallbox(wb, tariff, meter) {
   const note = el("wallboxNote");
   if (!wrap) return;
 
-  // No wallbox configured at all - hide the whole section rather than show
-  // an empty one.
-  if (!wb) {
+  // Hidden only when nothing is watching the charger at all. The clamp
+  // meter alone is enough to fill this panel: it measures the car, and
+  // everything the charger's own registers add is description.
+  const metered = !!(meter && meter.online);
+  if (!wb && !metered) {
     setHidden(title, true);
     setHidden(wrap, true);
     setHidden(note, true);
@@ -250,38 +252,11 @@ function renderWallbox(wb, tariff, meter) {
   setHidden(note, false);
   wrap.innerHTML = "";
 
-  // The clamp on the charger's feed, first and before every early return
-  // below: it is the one reading that keeps working while a car charges,
-  // which is exactly when the charger's own registers are left alone.
-  if (meter && meter.online) {
-    const amps = (meter.currents_a || []).map((a) => `${fmt(a, 1)} A`).join(" · ");
-    const el2 = document.createElement("div");
-    el2.className = "tile";
-    el2.innerHTML = `
-      <div class="label"><span class="dot" style="background:${cssVar("--series-wallbox-meter")}"></span>Measured at the Feed</div>
-      <div class="value">${fmt(meter.total_kw)} kW</div>
-      <div class="sub">${amps || "Clamp meter, read while the charger is left alone"}</div>
-    `;
-    wrap.appendChild(el2);
-  }
-
-  // Restarted while a car was charging, so there is no snapshot to show and
-  // reading one would interrupt the charge. An empty panel would read as a
-  // fault, so name the reason.
-  if (wb.awaiting_first_read) {
-    const el = document.createElement("div");
-    el.className = "tile";
-    el.innerHTML = `
-      <div class="label"><span class="dot" style="background:${cssVar("--series-wallbox")}"></span>Wallbox</div>
-      <div class="value">Not read</div>
-      <div class="sub">A car is charging and reading the charger would interrupt it</div>
-    `;
-    wrap.appendChild(el);
-    note.textContent =
-      "Every Modbus read drops this charger's current to 0 A for about two minutes, so " +
-      "it is left alone while a car draws. The panel fills in once the charge finishes.";
-    return;
-  }
+  // Notes are collected and written once at the end. They used to be
+  // assigned one after another, and the last assignment won - so the line
+  // explaining why the panel had frozen was overwritten by the one about
+  // the register map.
+  const notes = [];
 
   const tile = (label, value, sub, subClass, color) => {
     const el = document.createElement("div");
@@ -294,37 +269,105 @@ function renderWallbox(wb, tariff, meter) {
     wrap.appendChild(el);
   };
 
-  if (!wb.online) {
-    tile("Wallbox", "Offline", wb.error || "No answer on Modbus TCP", "sub warning", "--status-error");
-    note.textContent =
-      "The wallbox allows only two Modbus sessions and one is normally taken by the SEMS cloud - " +
-      "an offline reading here often just means both slots were busy.";
+  // First, and before every early return below: the clamp on the charger's
+  // feed. This is the measurement - 1 W resolution, every tick, whatever
+  // the charger is doing - and it carries the plain label for that reason.
+  // The charger's own power register gets a qualified one further down.
+  if (metered) {
+    const amps = (meter.currents_a || []).map((a) => `${fmt(a, 1)} A`).join(" · ");
+    tile(
+      "Charging Power",
+      `${fmt(meter.total_kw)} kW`,
+      amps || "Clamp meter on the charger's feed",
+      "sub",
+      "--series-wallbox-meter"
+    );
+  }
+
+  // No charger configured, or it has never answered: the clamp is carrying
+  // the panel on its own, which is enough for every number that matters.
+  if (!wb) {
+    notes.push(
+      "The charger's Modbus registers are not being read. Power and energy come " +
+        "from the clamp meter on its feed, which is where they are measured anyway; " +
+        "what is missing is the charger's own description of itself - plug state, " +
+        "charge mode, RFID card."
+    );
+    note.textContent = notes.join(" ");
     return;
   }
 
-  // Which of the two reading strategies is running. Worth naming, because
-  // the difference is whether a charge can be cut short - see
-  // Controller._poll_wallbox and WALLBOX_POLL_MODE.
-  const mode = wb.poll_mode === "direct"
-    ? "Reading mode: direct - the charger is read on its interval whatever the house " +
-      "is doing. On this hardware that can interrupt a charge; it is on to test whether " +
-      "a firmware change has fixed that. "
-    : "Reading mode: gated - the charger is left alone while the household load says " +
-      "a car is drawing. ";
+  // Restarted while a car was charging, so there is no register snapshot and
+  // taking one would interrupt the charge.
+  if (wb.awaiting_first_read) {
+    tile(
+      "Charger Registers",
+      "Not read",
+      "A car is charging and reading the charger would interrupt it",
+      "sub",
+      "--series-wallbox"
+    );
+    notes.push(
+      "Every Modbus read drops this charger's current to 0 A for about two minutes, " +
+        "so it is left alone while a car draws." +
+        (metered
+          ? " The power above is unaffected - it is measured on the feed, not asked of the charger."
+          : " The panel fills in once the charge finishes.")
+    );
+    note.textContent = notes.join(" ");
+    return;
+  }
+
+  if (!wb.online) {
+    tile("Charger Registers", "Offline", wb.error || "No answer on Modbus TCP", "sub warning", "--status-error");
+    notes.push(
+      "The wallbox allows only two Modbus sessions and one is normally taken by the " +
+        "SEMS cloud - an offline reading here often just means both slots were busy." +
+        (metered ? " The measured power above is not affected." : "")
+    );
+    note.textContent = notes.join(" ");
+    return;
+  }
+
+  // Which of the two reading strategies is running, and - for the gated
+  // one - which witness is holding the gate. Both are worth naming: the
+  // first decides whether a charge can be cut short, the second decides
+  // whether the gate can see a charge at all. See Controller._poll_wallbox.
+  const GATE = {
+    meter: "held by the clamp meter on the charger's feed, which measures the car directly",
+    house: "held by the household load above the heater, because the clamp meter is away - " +
+      "that estimate cannot see a single-phase car at the 6 A minimum",
+    none: "not being answered by anything: the clamp meter is away and the inverter is unreachable",
+  };
+  if (wb.poll_mode === "direct") {
+    notes.push(
+      "Reading mode: direct - the charger is read on its interval whatever else is " +
+        "happening. On this hardware that can interrupt a charge; it is on to test " +
+        "whether a firmware change has fixed that."
+    );
+  } else {
+    notes.push(
+      `Reading mode: gated - the charger is left alone while a car draws, ${
+        GATE[wb.gate_source] || GATE.none
+      }.`
+    );
+  }
 
   // Reading the charger cuts the charging current on this hardware, so the
-  // poll is suspended while a car draws and these values stand still. Say so
-  // rather than let the panel look stuck - see Controller._poll_wallbox.
+  // poll is suspended while a car draws and these register values stand
+  // still. Say so rather than let the panel look stuck.
   if (wb.poll_suspended) {
-    note.textContent = mode +
-      "A car is charging, so the wallbox is not being read: every Modbus read drops " +
-      "the charging current to 0 A for about two minutes on this hardware. The values " +
-      "below are the last reading from before the charge started and will refresh once " +
-      "it finishes.";
+    notes.push(
+      "A car is charging, so the charger is not being read: every Modbus read drops " +
+        "the charging current to 0 A for about two minutes on this hardware. The register " +
+        "values below are from before the charge started and will refresh once it finishes." +
+        (metered ? " The measured power at the top is live throughout." : "")
+    );
   } else {
-    note.textContent = mode +
+    notes.push(
       "The wallbox allows only two Modbus sessions and one is normally taken by the " +
-      "SEMS cloud, so a reading here can fail when both slots are busy.";
+        "SEMS cloud, so a reading here can fail when both slots are busy."
+    );
   }
 
   // Charging is the one state worth colouring; everything else stays neutral
@@ -336,8 +379,16 @@ function renderWallbox(wb, tariff, meter) {
        wb.status_code === null ? plugged : `${plugged} · code ${wb.status_code}`,
        "sub", statusColor);
 
+  // The charger's own account of its power. Kept for the cross-check, not
+  // for the number: 0.1 kW steps against the clamp's 1 W, and frozen for
+  // the whole of any charge. Labelled so it can never be mistaken for the
+  // measurement at the top.
   const amps = wb.currents_a ? wb.currents_a.map((a) => `${fmt(a, 1)} A`).join(" · ") : "";
-  tile("Charging Power", wb.power_kw === null ? "-" : `${fmt(wb.power_kw, 1)} kW`, amps);
+  tile(
+    "Charger's Own Reading",
+    wb.power_kw === null ? "-" : `${fmt(wb.power_kw, 1)} kW`,
+    amps || "Register 10015, in 0.1 kW steps" + (wb.poll_suspended ? " - stale during a charge" : "")
+  );
 
   const volts = wb.voltages_v ? wb.voltages_v.map((v) => `${fmt(v, 1)} V`).join(" · ") : "-";
   tile("Grid Voltage", volts, "L1 · L2 · L3");
@@ -376,9 +427,11 @@ function renderWallbox(wb, tariff, meter) {
          "sub mono");
   }
 
-  note.textContent =
+  notes.push(
     "Read-only. Register map is community-derived (evcc) and not confirmed by GoodWe - " +
-    "no alarm register is documented, so unknown registers are shown raw above.";
+      "no alarm register is documented, so unknown registers are shown raw above."
+  );
+  note.textContent = notes.join(" ");
 }
 
 // Status codes that mean the surplus is actively being used (shown with the
