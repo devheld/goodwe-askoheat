@@ -138,19 +138,16 @@ h1 {
   margin: -12px 0 20px;
 }
 
+/* auto-fill, not auto-fit: the empty tracks stay, so a row of two tiles
+   gets the same column width as a row of eight. With auto-fit the leftover
+   tracks collapse and two tiles stretch across the page, which made the
+   roof sides look like a different kind of thing from the row above them.
+   Every tile grid on a page therefore lines up on the same columns. */
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
   gap: 8px;
   margin-bottom: 20px;
-}
-
-/* A row of two or three tiles has no business spanning a 1080px page -
-   stretched that wide they stop reading as the same kind of thing as the
-   row above them. */
-.tiles.narrow {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 260px));
-  justify-content: start;
 }
 
 .tile {
