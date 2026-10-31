@@ -397,6 +397,7 @@ class HistoryStore:
                     battery_charge_kw,
                     battery_discharge_kw,
                     COALESCE(heater_load_w, 0) / 1000.0 AS asko_kw,
+                    heatpump_kw,
                     (julianday(timestamp)
                         - julianday(LAG(timestamp) OVER (ORDER BY timestamp))) * 24.0 AS raw_h
                 FROM readings
@@ -426,6 +427,14 @@ class HistoryStore:
                 SUM(battery_charge_kw * h)                             AS battery_charge,
                 SUM(battery_discharge_kw * h)                          AS battery_discharge,
                 SUM(asko_kw * h)                                       AS asko,
+                -- The heat pump has a clamp meter on its feed. COALESCE
+                -- because the column only exists from the day it was
+                -- fitted; heatpump_hours says how much of the period that
+                -- covers, so the page can admit the rest is still inside
+                -- the household figure rather than implying the pump was
+                -- off.
+                SUM(COALESCE(heatpump_kw, 0) * h)                      AS heatpump,
+                SUM(CASE WHEN heatpump_kw IS NULL THEN 0 ELSE h END)   AS heatpump_hours,
                 -- What went into the inverter and never came out of it as
                 -- load, storage or export. Clamped per sample because a
                 -- negative loss is arithmetic noise, not energy appearing.
@@ -459,6 +468,8 @@ class HistoryStore:
             "battery_charge",
             "battery_discharge",
             "asko",
+            "heatpump",
+            "heatpump_hours",
             "wallbox",
             "other",
             "loss_overhead",
@@ -475,7 +486,11 @@ class HistoryStore:
         for row in rows:
             row["wallbox"] = wallbox.get(row["bucket"], 0.0)
             row["other"] = max(
-                (row["consumption"] or 0.0) - (row["asko"] or 0.0) - row["wallbox"], 0.0
+                (row["consumption"] or 0.0)
+                - (row["asko"] or 0.0)
+                - (row["heatpump"] or 0.0)
+                - row["wallbox"],
+                0.0,
             )
 
         losses = self._add_losses(spec["fmt"], since, rows)

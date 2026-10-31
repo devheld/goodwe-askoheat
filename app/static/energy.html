@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Energy - Home Energy Manager</title>
-<link rel="stylesheet" href="/static/base.css?v=5" />
+<link rel="stylesheet" href="/static/base.css?v=6" />
 <link rel="stylesheet" href="/static/nav.css?v=1" />
 <style>
   :root {
@@ -28,6 +28,12 @@
     --e-solar:   #2a78d6;
     --e-house:   #eb6834;
     --e-asko:    #6250d6;
+    /* The heat pump, measured on its own feed since 31 Oct 2026. Petrol
+       because every nearer hue on this page was taken, and because the
+       stack is ordered household - heat pump - AskoHeat - wallbox so that
+       it never touches the aqua it is closest to. Validated in that order
+       in both modes: worst adjacent CVD delta-E 8.6, normal vision 16.8. */
+    --e-heatpump: #00909b;
     --e-wallbox: #1baf7a;
     --e-import:  #e87ba4;
     --e-export:  #008300;
@@ -64,6 +70,7 @@
       --e-solar:   #3987e5;
       --e-house:   #d95926;
       --e-asko:    #9085e9;
+      --e-heatpump: #19a7b5;
       --e-wallbox: #199e70;
       --e-import:  #d55181;
       --e-export:  #008300;
@@ -89,6 +96,7 @@
     --e-solar:   #3987e5;
     --e-house:   #d95926;
     --e-asko:    #9085e9;
+    --e-heatpump: #19a7b5;
     --e-wallbox: #199e70;
     --e-import:  #d55181;
     --e-export:  #008300;
@@ -262,6 +270,6 @@
 <script src="/static/nav.js?v=2"></script>
 <script src="/static/vendor/d3.v7.min.js"></script>
 <script src="/static/chartkit.js?v=1"></script>
-<script src="/static/energy.js?v=9"></script>
+<script src="/static/energy.js?v=10"></script>
 </body>
 </html>

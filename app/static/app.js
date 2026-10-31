@@ -229,7 +229,7 @@ function renderRoof(latest) {
 // its values are a nested object with mixed shapes (triples of phase values,
 // a raw-register map, an offline state) that the generic tile renderer has
 // no reason to learn about.
-function renderWallbox(wb, tariff) {
+function renderWallbox(wb, tariff, meter) {
   // The heading is optional: on the wallbox page the page title is the
   // heading, on a page that lists several sections it is a section title.
   const title = el("wallboxTitle");
@@ -249,6 +249,21 @@ function renderWallbox(wb, tariff) {
   setHidden(wrap, false);
   setHidden(note, false);
   wrap.innerHTML = "";
+
+  // The clamp on the charger's feed, first and before every early return
+  // below: it is the one reading that keeps working while a car charges,
+  // which is exactly when the charger's own registers are left alone.
+  if (meter && meter.online) {
+    const amps = (meter.currents_a || []).map((a) => `${fmt(a, 1)} A`).join(" · ");
+    const el2 = document.createElement("div");
+    el2.className = "tile";
+    el2.innerHTML = `
+      <div class="label"><span class="dot" style="background:${cssVar("--series-wallbox-meter")}"></span>Measured at the Feed</div>
+      <div class="value">${fmt(meter.total_kw)} kW</div>
+      <div class="sub">${amps || "Clamp meter, read while the charger is left alone"}</div>
+    `;
+    wrap.appendChild(el2);
+  }
 
   // Restarted while a car was charging, so there is no snapshot to show and
   // reading one would interrupt the charge. An empty panel would read as a
@@ -451,7 +466,7 @@ async function fetchLive() {
     renderTiles("tiles", TILE_DEFS, latest);
     renderRoof(latest);
     renderTiles("tilesAsko", ASKO_TILE_DEFS, latest);
-    renderWallbox(latest.wallbox, latest.tariff);
+    renderWallbox(latest.wallbox, latest.tariff, (latest.shelly || {}).wallbox);
     renderStatusBanner(latest);
     // Anything on this page that needs the live payload but is not part of
     // this file - the wallbox page's charging sessions want the tariff.
@@ -1119,24 +1134,35 @@ function renderLegend(container, defs) {
     .join("");
 }
 
+// Two readings of the same thing, which is the point: the charger's own
+// register, which goes quiet during a charge because reading it cuts the
+// current, and the clamp on its feed, which does not. Where the purple
+// line has a gap and the amber one does not, that is a charge the service
+// deliberately did not interrupt.
+const WALLBOX_SERIES = [
+  { key: "wallbox_power_kw", name: "Reported by the charger", color: "--series-wallbox" },
+  { key: "wallbox_meter_kw", name: "Measured at the feed", color: "--series-wallbox-meter" },
+];
+
 function renderWallboxChart(points, hours) {
   const wrap = el("wallboxChartWrap");
   if (!wrap) return;
-  const series = [
-    {
-      name: "Charging Power",
-      color: "--series-wallbox",
-      // Null stays null: a poll the charger did not answer is a gap, and
-      // drawing it as 0 would claim the car was plugged in and idle.
-      points: points.map((p) => ({
-        t: new Date(p.timestamp),
-        v:
-          p.wallbox_power_kw === null || p.wallbox_power_kw === undefined
-            ? null
-            : p.wallbox_power_kw,
-      })),
-    },
-  ];
+  // A series nobody has any data for is left out entirely rather than
+  // drawn as an empty line with a legend entry.
+  const defs = WALLBOX_SERIES.filter((d) =>
+    points.some((p) => p[d.key] !== null && p[d.key] !== undefined)
+  );
+  const series = defs.map((d) => ({
+    name: d.name,
+    color: d.color,
+    // Null stays null: a poll nothing answered is a gap, and drawing it as
+    // 0 would claim the car was plugged in and idle.
+    points: points.map((p) => ({
+      t: new Date(p.timestamp),
+      v: p[d.key] === null || p[d.key] === undefined ? null : p[d.key],
+    })),
+  }));
+  renderLegend(el("wallboxLegend"), defs);
   renderLineChart(wrap, series, { hours, height: 200, unit: "kW", yMin: 0 });
 }
 

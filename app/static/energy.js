@@ -3,8 +3,14 @@
 // AskoHeat or the house load, so the numbers are as good as the poll
 // interval and are labelled as such on the page.
 
+// Stack order, bottom to top. The heat pump sits second rather than
+// beside the wallbox on purpose: petrol and aqua are the closest pair on
+// this page, and segments only have to be told apart from the ones they
+// touch. In this order the worst adjacent pair clears the gates in both
+// modes (CVD delta-E 8.6, normal vision 16.8).
 const CONSUMERS = [
   { key: "other", name: "Household", color: "--e-house" },
+  { key: "heatpump", name: "Heat pump", color: "--e-heatpump" },
   { key: "asko", name: "AskoHeat", color: "--e-asko" },
   { key: "wallbox", name: "Wallbox", color: "--e-wallbox" },
 ];
@@ -203,6 +209,13 @@ function renderKpis(energy) {
       color: "--e-export",
     },
     {
+      label: "Heat pump",
+      value: kwh(t.heatpump),
+      money: cost(t.heatpump),
+      sub: heatpumpSub(energy),
+      color: "--e-heatpump",
+    },
+    {
       label: "AskoHeat",
       value: kwh(t.asko),
       money: cost(t.asko),
@@ -268,6 +281,18 @@ function renderKpis(energy) {
       <div class="sub">${tile.sub}</div>`;
     wrap.appendChild(el);
   }
+}
+
+// How much of the period the clamp meter actually covers. Before it was
+// fitted the pump's kWh are inside Household, and a tile that said "2.1
+// kWh" without that would read as the pump having been off.
+function heatpumpSub(energy) {
+  const covered = energy.totals.heatpump_hours || 0;
+  const total = energy.totals.hours || 0;
+  if (total > 0 && covered < total - 0.05) {
+    return `Metered for ${fmt(covered)} of ${fmt(total)} h - the rest is in Household`;
+  }
+  return "Measured on its own feed";
 }
 
 // The tile's own breakdown. Each line says which bucket it is, because the
@@ -517,6 +542,7 @@ function renderStackTable(energy) {
       (d) => `<tr>
         <td>${bucketLabel(d.bucket, energy.grain, true)}</td>
         <td>${fmt(d.other, 2)}</td>
+        <td>${fmt(d.heatpump, 2)}</td>
         <td>${fmt(d.asko, 2)}</td>
         <td>${fmt(d.wallbox, 2)}</td>
         <td>${fmt(d.consumption, 2)}</td>
@@ -528,7 +554,7 @@ function renderStackTable(energy) {
   document.getElementById("tableStack").innerHTML = `
     <table class="data">
       <thead><tr>
-        <th>Bucket</th><th>Household</th><th>AskoHeat</th><th>Wallbox</th>
+        <th>Bucket</th><th>Household</th><th>Heat pump</th><th>AskoHeat</th><th>Wallbox</th>
         <th>Total</th><th>Value</th><th>Solar</th>
       </tr></thead>
       <tbody>${rows}</tbody>
@@ -875,6 +901,17 @@ function renderEnergy() {
   renderLegend("legendDonut", CONSUMERS);
 
   renderLegend("legendLoss", LOSSES);
+
+  const stackNote = document.getElementById("stackNote");
+  const hpCovered = state.energy.totals.heatpump_hours || 0;
+  const hpTotal = state.energy.totals.hours || 0;
+  stackNote.textContent =
+    "Stacked kWh per bucket, with solar production as a line on the same scale." +
+    (hpTotal > 0 && hpCovered < hpTotal - 0.05
+      ? ` The heat pump has had its own meter for ${fmt(hpCovered)} of these ${fmt(
+          hpTotal
+        )} hours; before that its kWh are part of Household.`
+      : "");
 
   renderStack(state.energy);
   // Its legend depends on whether this period has an unsplit remainder, so
