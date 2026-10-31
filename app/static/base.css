@@ -33,6 +33,7 @@
   --series-step:            #2a78d6; /* blue (single series) */
   --series-roof-a:          #2a78d6; /* roof sides, validated pair */
   --series-roof-b:          #b06a00;
+  --series-heatpump:        #b5306b; /* raspberry, clamp meter on its feed */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -63,6 +64,7 @@
     --series-step:            #3987e5;
     --series-roof-a:          #3987e5;
     --series-roof-b:          #c47a10;
+    --series-heatpump:        #d9538a;
   }
 }
 
@@ -93,6 +95,7 @@
   --series-step:            #3987e5;
   --series-roof-a:          #3987e5;
   --series-roof-b:          #c47a10;
+  --series-heatpump:        #d9538a;
 }
 
 * { box-sizing: border-box; }

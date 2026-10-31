@@ -6,6 +6,27 @@ const TILE_DEFS = [
   { key: "battery_soc_pct", label: "Battery Charge Level", unit: "%", color: "--series-soc" },
   { key: "grid_import_kw", label: "Grid Import", unit: "kW", color: "--series-grid" },
   { key: "grid_export_kw", label: "Grid Export", unit: "kW", color: "--series-grid-export" },
+  {
+    key: "heatpump_kw",
+    label: "Heat Pump",
+    unit: "kW",
+    color: "--series-heatpump",
+    // No meter, no tile: a dash would suggest a reading that failed, and
+    // for most of this project's life there was nothing on that feed.
+    get: (latest) => {
+      const hp = (latest.shelly || {}).heatpump;
+      if (!hp || !hp.online) return null;
+      return {
+        value: `${fmt(hp.total_kw)} kW`,
+        // The clamp counts from the day it was fitted, so this is the
+        // pump's consumption since then and nothing longer.
+        sub:
+          hp.import_kwh === null || hp.import_kwh === undefined
+            ? ""
+            : `${fmt(hp.import_kwh, 1)} kWh since the meter went in`,
+      };
+    },
+  },
 ];
 
 // These three live on the AskoHeat page, which is already called AskoHeat.
@@ -92,9 +113,16 @@ function renderTiles(containerId, defs, latest) {
     let valueText;
     let sub = "";
     let subClass = "sub";
-    // Keyed on the unit, not on a list of key names: the list silently
-    // dropped every power tile added after it was written.
-    if (def.unit === "kW") {
+    // A def that brings its own accessor decides both its text and whether
+    // it appears at all.
+    if (def.get) {
+      const got = def.get(latest);
+      if (!got) continue;
+      valueText = got.value;
+      sub = got.sub || "";
+    // Otherwise keyed on the unit, not on a list of key names: the list
+    // silently dropped every power tile added after it was written.
+    } else if (def.unit === "kW") {
       valueText = `${fmt(latest[def.key])} ${def.unit}`;
     } else if (def.key === "battery_soc_pct") {
       valueText = latest.battery_soc_pct === null || latest.battery_soc_pct === undefined
@@ -510,6 +538,35 @@ function renderRoofChart() {
     unit: "kW",
     yMin: 0,
   });
+}
+
+// The heat pump, measured on its own feed rather than inferred from the
+// house load. Its own card for the same reason the roof sides have one:
+// the Power chart is full at seven series, and this is a single line that
+// only has to be read against itself.
+function renderHeatpump(points, hours) {
+  const card = el("heatpumpChartCard");
+  if (!card) return;
+  // Every row from before the clamp was fitted holds NULL. If that is all
+  // there is, the card stays away instead of showing an empty axis.
+  if (!points.some((p) => p.heatpump_kw !== null && p.heatpump_kw !== undefined)) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  renderLineChart(el("heatpumpChartWrap"), [
+    {
+      name: "Heat Pump",
+      color: "--series-heatpump",
+      points: points.map((p) => ({
+        t: new Date(p.timestamp),
+        v:
+          p.heatpump_kw === null || p.heatpump_kw === undefined
+            ? null
+            : p.heatpump_kw,
+      })),
+    },
+  ], { hours, height: 180, unit: "kW", yMin: 0 });
 }
 
 function renderPower() {
@@ -1069,6 +1126,7 @@ async function fetchHistory(hours) {
     lastHistory = { points, hours };
     renderPower();
     renderRoofChart();
+    renderHeatpump(points, hours);
     renderWallboxChart(points, hours);
 
     // Rows from before the battery-priority logic have no SOC - filtered
@@ -1162,7 +1220,7 @@ async function fetchHistory(hours) {
     // failed fetch is worse than an empty one.
     const wraps = [
       "powerChartWrap", "wallboxChartWrap", "stepChartWrap",
-      "socChartWrap", "loadChartWrap", "tempChartWrap",
+      "socChartWrap", "heatpumpChartWrap", "loadChartWrap", "tempChartWrap",
     ].map(el).filter(Boolean);
     for (const [i, wrap] of wraps.entries()) {
       wrap.innerHTML = i === 0

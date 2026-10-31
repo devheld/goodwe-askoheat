@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Home Energy Manager</title>
-<link rel="stylesheet" href="/static/base.css?v=2" />
+<link rel="stylesheet" href="/static/base.css?v=4" />
 <link rel="stylesheet" href="/static/nav.css?v=1" />
 <style>
   /* Only what this page alone needs. Everything else is in base.css. */
@@ -86,6 +86,15 @@
     <div id="roofChartWrap"></div>
   </div>
 
+  <div class="chart-card" id="heatpumpChartCard" hidden>
+    <h2>Heat Pump</h2>
+    <p class="zoom-hint">
+      Measured by its own clamp meter on the pump's feed - not the house
+      load with everything else subtracted off it.
+    </p>
+    <div id="heatpumpChartWrap"></div>
+  </div>
+
   <div class="chart-card">
     <h2>Battery Charge Level</h2>
     <div id="socChartWrap"></div>
@@ -94,6 +103,6 @@
   <p class="footer-note">As of: <span id="lastUpdate">-</span> · updates every <span id="updateInterval">-</span>s</p>
 </main>
 <script src="/static/nav.js?v=2"></script>
-<script src="/static/app.js?v=19"></script>
+<script src="/static/app.js?v=20"></script>
 </body>
 </html>
