@@ -609,6 +609,36 @@ that will settle it needs a charge, and it is the counters: both are
 cumulative, so differencing them over a window is independent of how often
 either was read.
 
+### 11. The charts were unreadable on a phone
+
+Every chart was drawn in a fixed 960-unit coordinate system and left to the
+SVG `viewBox` to fit whatever container it landed in. On a desktop that is
+roughly 1:1 and nobody notices. Inside the ~310 px content column of a
+phone it is a factor of 0.32, and a `viewBox` scales *everything* in it -
+an 11 px axis label came out under 4 px. The same scaling squashed each
+chart to a third of its height, because `height: auto` keeps the viewBox's
+aspect ratio.
+
+The coordinate system is now the container's own measured width
+(`chartWidth`), so one unit is one pixel: type is the size it says it is
+and a 220 px chart is 220 px tall on a phone as well. Width is read at draw
+time, so every page redraws on resize - which is what a rotating phone is.
+
+What had been tuned for 960 px and had to become responsive: the x axis
+drops to three or four labels below 700 px; the energy page thins its
+bucket labels by the room the band actually has; the donut gives up radius
+and its labels give up their names, which the legend carries; the session
+chart shortens its date gutter and drops the cost from the bar label. Data
+tables scroll inside their own box below 560 px - a six-column table cannot
+shrink to 310 px, and one that is wider than the page makes every chart on
+it scroll sideways too.
+
+One thing the pixel sizing exposed rather than caused: a chart whose values
+all round to the same label. The clamp on the charger's feed reads 5 W of
+standby, so all five y ticks said "0.0" and the repeat-dedupe left one
+label above four blank gridlines. The axis now takes as many decimals as it
+needs to separate its own ticks.
+
 ## Setup
 
 ```
