@@ -76,6 +76,25 @@
     <div id="powerChartWrap"></div>
   </div>
 
+  <div class="chart-card" id="phaseCard" hidden>
+    <h2>Main Fuse</h2>
+    <p class="zoom-hint">
+      Current per phase at the house connection, against the fuse rating.
+      The clamp meter there is the only instrument in the house that sees
+      this - the inverter reports load per phase, not what the connection
+      carries. The peak marker matters more than the live bar: a fuse is
+      not tripped by an average, and nobody is watching at the moment it
+      would count.
+    </p>
+    <p class="chart-verdict" id="phaseVerdict"></p>
+    <div class="legend" id="phaseLegend"></div>
+    <div id="phaseWrap"></div>
+    <details class="table-view">
+      <summary>Table view</summary>
+      <div id="phaseTable"></div>
+    </details>
+  </div>
+
   <div class="chart-card" id="roofChartCard" hidden>
     <h2>Roof Sides</h2>
     <p class="zoom-hint">
@@ -116,6 +135,7 @@
 </main>
 <script src="/static/nav.js?v=2"></script>
 <script src="/static/app.js?v=25"></script>
+<script src="/static/phases.js?v=1"></script>
 <script src="/static/heatpump.js?v=4"></script>
 </body>
 </html>

@@ -61,6 +61,8 @@ async def lifespan(app: FastAPI):
         # here - see heatpump_runs - they only decide what the record is
         # compared against.
         heatpump_run_kw=settings.heatpump_run_kw,
+        main_fuse_a=settings.main_fuse_a,
+        main_fuse_warn_pct=settings.main_fuse_warn_pct,
         heatpump_window=(
             settings.heatpump_window_from_h,
             settings.heatpump_window_to_h,
@@ -626,6 +628,18 @@ async def finance() -> dict:
         "days_to_break_even": days_left,
         "break_even_date": when.isoformat() if when else None,
     }
+
+
+@app.get("/api/phases")
+async def phases(hours: int = Query(24, ge=1, le=24 * 30)) -> dict:
+    """Phase current at the house connection, and how close it has come.
+
+    The clamp at the connection point measures the one quantity the
+    inverter cannot report, and until now it was written to the database
+    and read by nobody.
+    """
+    assert store is not None
+    return store.phase_currents(hours)
 
 
 @app.get("/api/heatpump/runs")

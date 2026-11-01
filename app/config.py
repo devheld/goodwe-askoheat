@@ -137,6 +137,16 @@ class Settings:
     # on the device. It decides the sign and the columns - see ShellyClient
     # and Reading in database.py.
     shelly_grid_host: str
+
+    # The main fuse, in amps per phase, and the share of it that counts as
+    # getting close. The clamp meter at the house connection is the only
+    # instrument here that can see phase current - the inverter reports
+    # load per phase but not what the connection carries - and it has
+    # already recorded 22 A on a single phase, which nothing displayed.
+    # Nothing here protects anything: the fuse does that. This only makes
+    # the distance to it visible before a new load is added.
+    main_fuse_a: float
+    main_fuse_warn_pct: float
     shelly_heatpump_host: str
     shelly_wallbox_host: str
     shelly_port: int
@@ -435,6 +445,8 @@ def load_settings() -> Settings:
         wallbox_poll_mode=_wallbox_poll_mode(),
         # SHELLY_HOST is the name the first of these meters had when it was
         # the only one, kept as a fallback so an older .env still works.
+        main_fuse_a=float(os.environ.get("MAIN_FUSE_A", "0")),
+        main_fuse_warn_pct=float(os.environ.get("MAIN_FUSE_WARN_PCT", "80")),
         shelly_grid_host=os.environ.get(
             "SHELLY_GRID_HOST", os.environ.get("SHELLY_HOST", "")
         ),

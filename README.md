@@ -911,6 +911,44 @@ paragraph says as much in its own words. Counting the charging in the
 savings while leaving the charger out of the cost would be a payback
 calculation with its thumb on the scale.
 
+### 19. The redundant clamp was measuring the wrong thing
+
+The clamp meter at the house connection duplicates the inverter's own grid
+reading. Over 7234 paired samples the two differ by a median of 16 W and a
+95th percentile of 97 W; the 1.3% that differ by more than half a kilowatt
+are sampling skew, two instruments read a second apart with a compressor
+starting in between, not disagreement. As a cross-check it has done its
+job and has little left to prove.
+
+But a 3EM does not only report a total. It reports current per phase, and
+that the inverter cannot: its registers 35163/35165/35167 give load per
+phase, which is not what the connection carries. Those three columns were
+being written to the database every minute and read by nothing - and they
+already held a 22.0 A peak on one phase of a 25 A fuse, at 21:37 on a
+Wednesday evening, which no page would have shown anybody.
+
+So the fix was not to move the clamps. It was to use the quantity only they
+can see:
+
+- **The axis is the fuse, never the data.** A bar chart that rescales to
+  its largest value would show a comfortable evening and a near-trip as the
+  same picture. The track is the full rating, and a reading above it is
+  clamped with the real number still printed beside it.
+- **The peak is the headline, not the live value.** A fuse is not tripped by
+  an average, and nobody is at the dashboard when it would matter. Each
+  phase carries its window peak as a marker, and the sentence at the top
+  leads with the worst ever recorded and when it happened.
+- **The threshold is a line, not a colour.** `MAIN_FUSE_WARN_PCT` is drawn
+  on the track, so "too close" is a position - the same device as the
+  heating window on the compressor chart, and it survives colour-blindness
+  and a monochrome print alike.
+
+`MAIN_FUSE_A` is a setting and not a reading, and the card says so. Nothing
+here protects anything; the fuse does that. This only makes the distance to
+it visible before another load is added, which is exactly the question a
+house with a car, a heat pump and an immersion heater on a 25 A connection
+keeps being asked.
+
 ## Setup
 
 ```

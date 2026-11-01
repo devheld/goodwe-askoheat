@@ -149,6 +149,8 @@ class HistoryStore:
         wallbox_meter_busy_kw: float = 0.1,
         heatpump_run_kw: float = 0.5,
         heatpump_window: tuple[int, int] = (8, 18),
+        main_fuse_a: float = 0.0,
+        main_fuse_warn_pct: float = 80.0,
     ) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
@@ -172,6 +174,8 @@ class HistoryStore:
         # against. See heatpump_runs.
         self._heatpump_run_kw = heatpump_run_kw
         self._heatpump_window = heatpump_window
+        self._main_fuse_a = main_fuse_a
+        self._main_fuse_warn_pct = main_fuse_warn_pct
         self._battery_full_soc_pct = battery_full_soc_pct
         self._heating_start_max_temp_c = heating_start_max_temp_c
         self._step_max = step_max
@@ -1084,6 +1088,75 @@ class HistoryStore:
             "standby_samples": len(standby),
             "meter_counter": span(meter_counter),
             "charger_counter": span(charger_counter),
+        }
+
+    def phase_currents(self, hours: int = 24) -> dict:
+        """Current per phase at the house connection: now, and the peaks.
+
+        The peaks are the point, not the live value. A fuse is not tripped
+        by an average, and nobody is looking at a dashboard at the moment
+        it would matter - this installation had already reached 22 A on one
+        phase at half past nine at night, and a live gauge would have shown
+        it to an empty room. So each phase carries what it is drawing now,
+        the worst it reached inside the window, and the worst it has ever
+        reached, and the card leads with the last of those.
+
+        Aggregated in SQL rather than in Python: this table grows by a row
+        a minute forever, and three MAX() calls do not need 500,000 rows
+        carried into the process to find one number.
+        """
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        cols = ("shelly_l1_a", "shelly_l2_a", "shelly_l3_a")
+        maxes = ", ".join("MAX(%s) AS %s" % (c, c) for c in cols)
+        with self._connect() as conn:
+            now = conn.execute(
+                "SELECT timestamp, %s FROM readings WHERE shelly_l1_a IS NOT NULL "
+                "ORDER BY timestamp DESC LIMIT 1" % ", ".join(cols)
+            ).fetchone()
+            window = conn.execute(
+                "SELECT %s, COUNT(shelly_l1_a) AS n FROM readings WHERE timestamp >= ?"
+                % maxes,
+                (since,),
+            ).fetchone()
+            ever = conn.execute("SELECT %s FROM readings" % maxes).fetchone()
+
+            phases = []
+            for index, col in enumerate(cols, 1):
+                phases.append(
+                    {
+                        "name": "L%d" % index,
+                        "now_a": round(now[col], 2) if now and now[col] is not None else None,
+                        "peak_a": round(window[col], 2) if window[col] is not None else None,
+                        "ever_a": round(ever[col], 2) if ever[col] is not None else None,
+                    }
+                )
+
+            # When the worst of all three happened. Equality on a REAL is
+            # safe here because the value came out of that same column.
+            worst = None
+            ranked = [p for p in phases if p["ever_a"] is not None]
+            if ranked:
+                top = max(ranked, key=lambda p: p["ever_a"])
+                col = cols[int(top["name"][1:]) - 1]
+                row = conn.execute(
+                    "SELECT timestamp FROM readings WHERE %s = ? "
+                    "ORDER BY timestamp DESC LIMIT 1" % col,
+                    (top["ever_a"],),
+                ).fetchone()
+                worst = {
+                    "name": top["name"],
+                    "amps": top["ever_a"],
+                    "at": row["timestamp"] if row else None,
+                }
+
+        return {
+            "fuse_a": self._main_fuse_a,
+            "warn_pct": self._main_fuse_warn_pct,
+            "hours": hours,
+            "now_at": now["timestamp"] if now else None,
+            "samples": (window["n"] if window else 0) or 0,
+            "phases": phases,
+            "worst_ever": worst,
         }
 
     def heatpump_runs(self, since_iso: str, gap_minutes: int = 10) -> dict:
