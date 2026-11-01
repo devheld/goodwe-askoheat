@@ -319,19 +319,26 @@ def _benchmark(priced: dict, window: dict, total_days: float) -> dict | None:
     chf_year_mine = self_kwh * buy + export_kwh * sell
     kwh_day = year_kwh / 365.0
 
-    # Everything from here is the window only.
-    window_days = window["plan_days"]
-    pv_kwh = window["pv_kwh"]
-    measured_chf = window["pv_self_chf"] + window["pv_export_chf"]
+    # Everything from here is the window only - and with no approval date
+    # on file there is no window at all. Falling back to the whole record
+    # would quietly compare the throttled months after all.
+    has_window = bool(settings.export_allowed_from)
+    window_days = window["plan_days"] if has_window else 0.0
+    pv_kwh = window["pv_kwh"] if has_window else 0.0
+    measured_chf = (window["pv_self_chf"] + window["pv_export_chf"]) if has_window else 0.0
     expected_kwh = kwh_day * window_days
     expected_chf = chf_year / 365.0 * window_days
     # The quote's flat daily plan, priced day by day at the tariff of the
     # year that day fell in.
     expected_chf_mine = (
-        self_kwh / 365.0 * window["plan_import_days"]
-        + export_kwh / 365.0 * window["plan_export_days"]
+        (
+            self_kwh / 365.0 * window["plan_import_days"]
+            + export_kwh / 365.0 * window["plan_export_days"]
+        )
+        if has_window
+        else 0.0
     )
-    ready = window_days >= settings.benchmark_min_days and bool(settings.export_allowed_from)
+    ready = has_window and window_days >= settings.benchmark_min_days
 
     when = None
     if settings.investment_date and settings.benchmark_payback_years > 0:
