@@ -1179,6 +1179,12 @@ class HistoryStore:
         return {
             "window": {"from_h": from_h, "to_h": to_h},
             "threshold_kw": self._heatpump_run_kw,
+            # The span the clamp actually covers. An empty stretch inside it
+            # is the pump standing still; an empty stretch outside it is
+            # this service not having been there, and the two must not read
+            # the same on a chart whose whole point is empty stretches.
+            "measured_from": rows[0]["timestamp"] if rows else None,
+            "measured_to": rows[-1]["timestamp"] if rows else None,
             "runs": runs,
             "totals": {
                 "runs": len(runs),

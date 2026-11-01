@@ -77,7 +77,12 @@ function hpTime(date) {
 // exactly the evidence that a setting worked.
 function hpDayRows(payload) {
   const rows = new Map();
-  const first = hpStartOfDay(new Date(payload.since));
+  // Not from the range's start but from the first day the clamp recorded:
+  // a row for a day nothing was measured on would be an empty row, and an
+  // empty row here means the pump stood still.
+  const since = hpStartOfDay(new Date(payload.since));
+  const measured = payload.measured_from ? hpStartOfDay(new Date(payload.measured_from)) : since;
+  const first = measured > since ? measured : since;
   const today = hpStartOfDay(new Date());
   for (let d = new Date(first); d <= today; d.setDate(d.getDate() + 1)) {
     rows.set(hpDayKey(d), { day: new Date(d), segments: [], kwh: 0, runs: 0 });
@@ -151,10 +156,32 @@ function renderHeatpumpRuns() {
     }" stroke="${grid}" stroke-width="1" />`;
   }
 
+  // Before the clamp was fitted and after the last sample there is no
+  // record, which on the first and last row is a part of the day. Hatched
+  // over, so the blank that means "nothing ran" is never confused with the
+  // blank that means "nobody was looking".
+  const measuredFrom = hpRuns.measured_from ? new Date(hpRuns.measured_from) : null;
+  const measuredTo = hpRuns.measured_to ? new Date(hpRuns.measured_to) : null;
+
   const hits = [];
   rows.forEach((row, i) => {
     const rowY = padT + i * HP_ROW_H;
     const barY = rowY + (HP_ROW_H - HP_BAR_H) / 2;
+    const dayEnd = new Date(row.day);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    const blanks = [];
+    if (measuredFrom && measuredFrom > row.day) {
+      blanks.push([row.day, measuredFrom < dayEnd ? measuredFrom : dayEnd]);
+    }
+    if (measuredTo && measuredTo < dayEnd) {
+      blanks.push([measuredTo > row.day ? measuredTo : row.day, dayEnd]);
+    }
+    for (const [from, to] of blanks) {
+      const x0 = x((from - row.day) / 3600000);
+      const x1 = x((to - row.day) / 3600000);
+      if (x1 - x0 < 1) continue;
+      svg += `<rect x="${x0}" y="${barY}" width="${x1 - x0}" height="${HP_BAR_H}" fill="url(#hpNoData)" />`;
+    }
     const label = row.day.toLocaleDateString("en-GB", {
       weekday: narrow ? undefined : "short",
       day: "2-digit",
@@ -186,7 +213,12 @@ function renderHeatpumpRuns() {
     if (row.kwh > 0.005) {
       svg += `<text x="${width - padR + 8}" y="${rowY + HP_ROW_H / 2 + 4}" font-size="11" fill="${secondary}">${fmt(row.kwh, 1)} kWh</text>`;
     } else {
-      svg += `<text x="${width - padR + 8}" y="${rowY + HP_ROW_H / 2 + 4}" font-size="11" fill="${muted}">-</text>`;
+      // A day inside the recorded span that simply had no run is the
+      // result worth seeing, so it gets a word rather than a dash.
+      const recorded = measuredFrom && measuredFrom < dayEnd && (!measuredTo || measuredTo > row.day);
+      svg += `<text x="${width - padR + 8}" y="${rowY + HP_ROW_H / 2 + 4}" font-size="11" fill="${muted}">${
+        recorded ? "none" : "-"
+      }</text>`;
     }
   });
 
@@ -196,18 +228,28 @@ function renderHeatpumpRuns() {
 
   wrap.innerHTML = `
     <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+      <defs>
+        <pattern id="hpNoData" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="6" height="6" fill="${cssVar("--surface-1")}" />
+          <line x1="0" y1="0" x2="0" y2="6" stroke="${cssVar("--baseline")}" stroke-width="2" />
+        </pattern>
+      </defs>
       ${svg}
       ${hits.join("")}
     </svg>`;
 
   hpAttachTooltip(wrap);
-  renderLegend(el("heatpumpRunsLegend"), [
+  const legend = [
     { name: "Compressor running", color: "--series-heatpump" },
     {
       name: `Window it is set to heat in (${String(fromH).padStart(2, "0")}:00-${String(toH).padStart(2, "0")}:00)`,
       color: "--gridline",
     },
-  ]);
+  ];
+  if (measuredFrom || measuredTo) {
+    legend.push({ name: "Not recorded", color: "--baseline" });
+  }
+  renderLegend(el("heatpumpRunsLegend"), legend);
   hpRenderNote();
   hpRenderTable();
 }
