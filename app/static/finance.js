@@ -114,7 +114,10 @@ function finRenderBars() {
       // Priced at this household's tariffs, because the bar below it is:
       // two bars in two different currencies-per-kWh would be a race on
       // different tracks.
-      name: "The quote's plan, at my tariffs",
+      name:
+        finance.benchmark.no_export_days > 0.5
+          ? "The quote's plan, minus what I may not sell"
+          : "The quote's plan, at my tariffs",
       value: finance.benchmark.expected_chf_to_date_at_my_tariffs,
       fill: "none",
       stroke: cssVar("--text-muted"),
@@ -185,6 +188,28 @@ function finRenderBenchmark() {
     `Its own figure, at its own ${fmt(b.import_chf_per_kwh, 4)}/kWh, was ` +
       `${fmt(b.expected_chf_to_date, 0)} ${finance.currency}.`,
   ];
+  // The quote counted on selling half the annual yield. Until feed-in was
+  // approved that revenue was not available at any price, so it is taken
+  // out of the plan rather than scored against the installation.
+  if (b.no_export_days > 0.5) {
+    parts.push(
+      `<em>Feed-in was not permitted for ${fmt(b.no_export_days, 0)} of those days` +
+        (b.export_allowed_from ? `, until ${finDate(b.export_allowed_from)}` : "") +
+        `, so the ${fmt(b.export_chf_per_year, 0)} ${finance.currency} a year of export ` +
+        `revenue the quote counted on could not be earned. Its plan is priced without it ` +
+        `for those days.</em>`
+    );
+  }
+  // And with nowhere to send a surplus, the inverter throws some away -
+  // so the production figure is a floor on what the roof can do, not a
+  // measurement of it.
+  if (m.curtailed_kwh > 0.5) {
+    parts.push(
+      `${fmt(m.curtailed_kwh, 0)} kWh of surplus had nowhere to go in that time ` +
+        (m.curtailed_pct_of_pv === null ? "" : `(${fmt(m.curtailed_pct_of_pv, 1)}% of production) `) +
+        `&mdash; the production figure is a floor, not a ceiling.`
+    );
+  }
   node.innerHTML = parts.join(" ");
 }
 
@@ -261,10 +286,8 @@ function finRenderTable() {
   if (hist.length) {
     rows.push([
       "Tariff",
-      hist
-        .map((h) => `${fmt(h.import_chf_per_kwh ?? h.import_per_kwh, 4)}`)
-        .join(" &rarr; "),
-      `import, from ${hist.map((h) => h.from).join(" and ")} &mdash; each month is priced at the rate in force then`,
+      hist.map((h) => `${fmt(h.import_per_kwh, 4)}`).join(" &rarr; "),
+      `import, for ${hist.map((h) => h.year).join(" and ")} &mdash; each month is priced at that year's rate`,
     ]);
   }
 

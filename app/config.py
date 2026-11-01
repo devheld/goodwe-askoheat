@@ -13,17 +13,18 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _tariffs() -> tuple[tuple[str, float, float], ...]:
-    """Parse TARIFFS into (valid_from, import, export), oldest first.
+def _tariffs() -> tuple[tuple[int, float, float], ...]:
+    """Parse TARIFFS into (year, import, export), oldest first.
 
-    Format: `2026-01-01:0.28:0.11,2027-01-01:0.25:0.10` - a date the rate
-    takes effect from, the import price, the export price. An unparsable
-    entry is dropped with a warning rather than taking the whole
-    configuration down: a typo in a price list should not stop the heater
-    from regulating.
+    Format: `2026:0.28:0.11,2027:0.25:0.10` - the year the rate applies
+    to, the import price, the export price. A year and not a date, because
+    the utility publishes once a year and a date field would invite
+    guessing at a day that does not exist. An unparsable entry is dropped
+    with a warning rather than taking the whole configuration down: a typo
+    in a price list should not stop the heater from regulating.
     """
     raw = os.environ.get("TARIFFS", "").strip()
-    entries: list[tuple[str, float, float]] = []
+    entries: list[tuple[int, float, float]] = []
     for part in raw.split(","):
         part = part.strip()
         if not part:
@@ -33,8 +34,10 @@ def _tariffs() -> tuple[tuple[str, float, float], ...]:
             logging.getLogger(__name__).warning("TARIFFS: ignoring %r", part)
             continue
         try:
-            when = date.fromisoformat(fields[0].strip()).isoformat()
-            entries.append((when, float(fields[1]), float(fields[2])))
+            year = int(fields[0].strip())
+            if not 1900 <= year <= 2200:
+                raise ValueError(year)
+            entries.append((year, float(fields[1]), float(fields[2])))
         except ValueError:
             logging.getLogger(__name__).warning("TARIFFS: ignoring %r", part)
     return tuple(sorted(entries, key=lambda e: e[0]))
@@ -255,12 +258,22 @@ class Settings:
     # these, it regulates on power, not on price.
     price_import_chf_per_kwh: float
     price_export_chf_per_kwh: float
-    # The tariff history, oldest first. Prices change on a calendar, and a
-    # counter that spans a change has to price each kWh at the tariff that
-    # was in force when it was used - otherwise every new tariff sheet
-    # silently rewrites last year's savings. PRICE_* above stay as the
-    # fallback for dates before the first entry.
-    tariffs: tuple[tuple[str, float, float], ...]
+    # The tariff history by year, oldest first. Prices change once a year,
+    # and a counter that spans a change has to price each kWh at the
+    # tariff that was in force when it was used - otherwise every new
+    # tariff sheet silently rewrites last year's savings. PRICE_* above
+    # stay as the fallback for years before the first entry.
+    tariffs: tuple[tuple[int, float, float], ...]
+
+    # The date feed-in was permitted from. Before it, surplus could not be
+    # sold at any price: it went into the battery, into the hot water, or
+    # was thrown away by the inverter. That is not a missed opportunity,
+    # it is one that did not exist, so the benchmark must not expect
+    # export revenue for those days - the quote assumed half the annual
+    # yield would be exported, and comparing against that would score the
+    # installation against something it was not allowed to do. Blank means
+    # export was always permitted.
+    export_allowed_from: str
 
     # Usable battery capacity in kWh, needed to tell a round-trip loss from
     # energy that is simply still in the battery. Not readable over Modbus
@@ -416,6 +429,7 @@ def load_settings() -> Settings:
             os.environ.get("PRICE_EXPORT_CHF_PER_KWH", "0.10")
         ),
         tariffs=_tariffs(),
+        export_allowed_from=os.environ.get("EXPORT_ALLOWED_FROM", "").strip(),
         battery_capacity_kwh=float(os.environ.get("BATTERY_CAPACITY_KWH", "27")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/home-energy.db"),
     )

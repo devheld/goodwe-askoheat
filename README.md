@@ -840,10 +840,12 @@ Electricity tariffs change on a calendar, usually at new year. A counter
 that runs for a decade and prices its whole history at today's rate is
 wrong in a particular way: every time the utility publishes a new sheet,
 savings that were already earned move. So `TARIFFS` is a history rather
-than a number - a date the rate takes effect from, an import price, an
-export price - and energy is priced bucket by bucket at the rate that was
-in force then. `PRICE_IMPORT_CHF_PER_KWH` and `PRICE_EXPORT_CHF_PER_KWH`
-remain as the fallback for dates before the first entry.
+than a number - a year, an import price, an export price - and energy is
+priced bucket by bucket at the rate that applied then. The key is a year
+and not a date because the utility publishes once a year, and a date field
+would only invite guessing at a day nobody knows.
+`PRICE_IMPORT_CHF_PER_KWH` and `PRICE_EXPORT_CHF_PER_KWH` remain as the
+fallback for years before the first entry.
 
 Two consequences show up on the pages. A period that crosses a change has
 no single price, so where one is printed it is the hours-weighted average
@@ -857,6 +859,31 @@ This is also why the quote's tariffs live in `BENCHMARK_*` and not in
 `TARIFFS`. They are not a price this household ever paid; they are an
 assumption inside someone else's model, and the benchmark needs them to
 reproduce the figure that model printed.
+
+### 17. Revenue that was not available is not revenue that was missed
+
+Feed-in needed the utility's approval, and it arrived months after the
+roof did. Until then surplus could not be sold at any price: it went into
+the battery, into the hot water tank, or was thrown away by the inverter.
+The quote, meanwhile, had half the annual yield going to the grid - 6700 of
+15100 kWh - and counted the revenue.
+
+Comparing the two directly would score the installation against something
+it was not permitted to do, which measures the paperwork and not the roof.
+So `EXPORT_ALLOWED_FROM` splits the record, and for days before it the
+quote's daily plan is priced with its export half removed. The card says
+so in as many words, with the annual figure that was unavailable, because
+a benchmark that silently adjusts itself is worse than one that does not
+adjust at all.
+
+The same ban bends the production figure, and in the harder direction. With
+nowhere to send a surplus the inverter throttles, so measured production is
+a floor on what the roof can do rather than a measurement of it. The honest
+response is to publish the curtailed kWh next to the production ratio and
+let the reader see how large the correction could be - on this installation
+about 3% of production, which is small enough that the shortfall against
+the quote survives it intact. The money comparison is the one the ban
+distorts massively; the production comparison it barely touches.
 
 ## Setup
 

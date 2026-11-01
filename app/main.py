@@ -163,12 +163,26 @@ def _rate_at(day: date) -> tuple[float, float]:
     an installation with no price history still prices its energy.
     """
     rate = (settings.price_import_chf_per_kwh, settings.price_export_chf_per_kwh)
-    for when, imp, exp in settings.tariffs:
-        if date.fromisoformat(when) <= day:
+    for year, imp, exp in settings.tariffs:
+        if year <= day.year:
             rate = (imp, exp)
         else:
             break
     return rate
+
+
+def _export_allowed(day: date) -> bool:
+    """Whether feed-in was permitted on a given day.
+
+    Until the utility's approval arrives a roof can produce but not sell,
+    and surplus with nowhere to go is not revenue anybody failed to earn.
+    """
+    if not settings.export_allowed_from:
+        return True
+    try:
+        return day >= date.fromisoformat(settings.export_allowed_from)
+    except ValueError:
+        return True
 
 
 def _bucket_day(bucket: str) -> date:
@@ -199,6 +213,13 @@ def _priced(buckets: list[dict]) -> dict:
         "pv_self_chf": 0.0,
         "pv_export_chf": 0.0,
         "heatpump_chf": 0.0,
+        # Day-weights for pricing a flat daily plan over this span: one
+        # for the import side, one for the export side, which is zero for
+        # the days feed-in was not permitted on.
+        "plan_days": 0.0,
+        "plan_import_days": 0.0,
+        "plan_export_days": 0.0,
+        "no_export_days": 0.0,
     }
     w_imp = w_exp = weight = 0.0
     seen: set[tuple[float, float]] = set()
@@ -218,6 +239,13 @@ def _priced(buckets: list[dict]) -> dict:
         w_imp += imp * hours
         w_exp += exp * hours
         weight += hours
+        day_weight = hours / 24.0
+        allowed = _export_allowed(_bucket_day(row["bucket"]))
+        out["plan_days"] += day_weight
+        out["plan_import_days"] += imp * day_weight
+        out["plan_export_days"] += (exp if allowed else 0.0) * day_weight
+        if not allowed:
+            out["no_export_days"] += day_weight
     fallback = _rate_at(date.today())
     out["import_per_kwh"] = round(w_imp / weight, 4) if weight > 0 else fallback[0]
     out["export_per_kwh"] = round(w_exp / weight, 4) if weight > 0 else fallback[1]
@@ -234,8 +262,8 @@ def _tariff(priced: dict | None = None) -> dict:
             "export_per_kwh": priced["export_per_kwh"],
             "blended": priced["blended"],
             "history": [
-                {"from": when, "import_per_kwh": imp, "export_per_kwh": exp}
-                for when, imp, exp in settings.tariffs
+                {"year": year, "import_per_kwh": imp, "export_per_kwh": exp}
+                for year, imp, exp in settings.tariffs
             ],
         }
     imp, exp = _rate_at(date.today())
@@ -245,14 +273,14 @@ def _tariff(priced: dict | None = None) -> dict:
         "export_per_kwh": exp,
         "blended": False,
         "history": [
-            {"from": when, "import_per_kwh": i, "export_per_kwh": e}
-            for when, i, e in settings.tariffs
+            {"year": year, "import_per_kwh": i, "export_per_kwh": e}
+            for year, i, e in settings.tariffs
         ],
     }
 
 
 def _benchmark(
-    recorded_days: float, pv_kwh: float, returned_chf: float, buy: float, sell: float
+    recorded_days: float, pv_kwh: float, returned_chf: float, priced: dict
 ) -> dict | None:
     """What the quote said the installation would do, measured against it.
 
@@ -282,11 +310,19 @@ def _benchmark(
         self_kwh * settings.benchmark_import_chf_per_kwh
         + export_kwh * settings.benchmark_export_chf_per_kwh
     )
+    buy = priced["import_per_kwh"]
+    sell = priced["export_per_kwh"]
     chf_year_mine = self_kwh * buy + export_kwh * sell
     kwh_day = year_kwh / 365.0
     expected_kwh = kwh_day * recorded_days
     expected_chf = chf_year / 365.0 * recorded_days
-    expected_chf_mine = chf_year_mine / 365.0 * recorded_days
+    # The quote's flat daily plan, priced day by day at that day's tariff,
+    # with its export half dropped for every day feed-in was not permitted
+    # on. Those francs were not missed, they were unavailable.
+    expected_chf_mine = (
+        self_kwh / 365.0 * priced["plan_import_days"]
+        + export_kwh / 365.0 * priced["plan_export_days"]
+    )
 
     when = None
     if settings.investment_date and settings.benchmark_payback_years > 0:
@@ -315,6 +351,13 @@ def _benchmark(
         "expected_kwh_to_date": round(expected_kwh, 1),
         "expected_chf_to_date": round(expected_chf, 2),
         "expected_chf_to_date_at_my_tariffs": round(expected_chf_mine, 2),
+        "no_export_days": round(priced["no_export_days"], 1),
+        "export_allowed_from": settings.export_allowed_from or None,
+        # What the quote expected to earn from export in a year, which is
+        # what the ban cost - at the quote's own export price.
+        "export_chf_per_year": round(
+            export_kwh * settings.benchmark_export_chf_per_kwh, 2
+        ),
         "production_pct": round(100.0 * pv_kwh / expected_kwh, 1) if expected_kwh > 0 else None,
         # Against the plan priced at this household's tariffs, so the ratio
         # is about the roof and the share kept in the house - not about the
@@ -513,8 +556,10 @@ async def finance() -> dict:
             "elapsed_days": elapsed,
             "pv_kwh": round(totals["pv"] or 0.0, 1),
             "pv_kwh_per_day": round((totals["pv"] or 0.0) / days, 2) if days > 0 else None,
+            "curtailed_kwh": round(energy["losses"]["curtailed_kwh"] or 0.0, 1),
+            "curtailed_pct_of_pv": energy["losses"]["curtailed_pct_of_pv"],
         },
-        "benchmark": _benchmark(days, totals["pv"] or 0.0, returned, buy, sell),
+        "benchmark": _benchmark(days, totals["pv"] or 0.0, returned, priced),
         "streams": streams,
         "returned_chf": returned,
         "remaining_chf": remaining,
