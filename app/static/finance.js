@@ -56,6 +56,7 @@ function renderFinance() {
   setHidden(card, false);
   finRenderVerdict();
   finRenderBars();
+  finRenderBenchmark();
   finRenderForecast();
   finRenderTable();
 }
@@ -103,13 +104,26 @@ function finRenderBars() {
       fill: cssVar("--gridline"),
       stroke: cssVar("--baseline"),
     },
-    {
-      name: "Saved so far",
-      value: finance.returned_chf,
-      fill: cssVar("--series-grid-export"),
-      stroke: null,
-    },
   ];
+  // The quote's promise, as an outline: a target, not money in the
+  // account, and the one bar here that was never measured. Dashed rather
+  // than tinted, so the three bars are told apart by their treatment and
+  // their own labels instead of by three hues.
+  if (finance.benchmark) {
+    bars.push({
+      name: "The quote promised by now",
+      value: finance.benchmark.expected_chf_to_date,
+      fill: "none",
+      stroke: cssVar("--text-muted"),
+      dash: "5 3",
+    });
+  }
+  bars.push({
+    name: "Saved so far",
+    value: finance.returned_chf,
+    fill: cssVar("--series-grid-export"),
+    stroke: null,
+  });
 
   const width = chartWidth(wrap);
   const max = Math.max(...bars.map((b) => Math.abs(b.value)), 1);
@@ -125,9 +139,12 @@ function finRenderBars() {
     const w = Math.max(2, (Math.abs(bar.value) / max) * width);
     svg += `<text x="0" y="${top + 12}" font-size="12" fill="${cssVar("--text-secondary")}">${finEscape(bar.name)}</text>`;
     svg += `<text x="${width}" y="${top + 12}" font-size="12" text-anchor="end" font-weight="600" fill="${cssVar("--text-primary")}">${finEscape(finMoney(bar.value, 0))}</text>`;
-    svg += `<rect x="0" y="${barY}" width="${w}" height="${FIN_BAR_H}" rx="3" fill="${bar.fill}"${
-      bar.stroke ? ` stroke="${bar.stroke}" stroke-width="1"` : ""
-    } />`;
+    const stroke = bar.stroke
+      ? ` stroke="${bar.stroke}" stroke-width="1"${
+          bar.dash ? ` stroke-dasharray="${bar.dash}"` : ""
+        }`
+      : "";
+    svg += `<rect x="0" y="${barY}" width="${w}" height="${FIN_BAR_H}" rx="3" fill="${bar.fill}"${stroke} />`;
   });
 
   wrap.innerHTML = `
@@ -135,6 +152,35 @@ function finRenderBars() {
          aria-label="Net investment against what has been saved so far">
       ${svg}
     </svg>`;
+}
+
+// The benchmark in words. Two ratios, because they say different things
+// and only together: the money ratio is what the household gets, the
+// production ratio is what the roof does. They come apart here - a battery
+// the quote did not include keeps nearly every kWh in the house at the
+// import tariff instead of exporting half of it at a third of the price,
+// so the money holds up better than the production does.
+function finRenderBenchmark() {
+  const node = el("financeBenchmark");
+  if (!node) return;
+  const b = finance.benchmark;
+  if (!b) {
+    node.textContent = "";
+    return;
+  }
+  const m = finance.measured;
+  const parts = [
+    `Against the ${finEscape(b.label)}, over the ${fmt(m.recorded_days, 0)} recorded days:`,
+    `<strong>${fmt(finance.returned_chf, 0)} ${finance.currency} saved where it promised ` +
+      `${fmt(b.expected_chf_to_date, 0)}` +
+      (b.return_pct === null ? "" : ` (${fmt(b.return_pct, 0)}%)`) +
+      `</strong>,`,
+    `and ${fmt(m.pv_kwh_per_day, 1)} kWh a day produced where it promised ` +
+      `${fmt(b.kwh_per_day, 1)}` +
+      (b.production_pct === null ? "" : ` (${fmt(b.production_pct, 0)}%)`) +
+      `.`,
+  ];
+  node.innerHTML = parts.join(" ");
 }
 
 function finRenderForecast() {
@@ -164,11 +210,18 @@ function finRenderForecast() {
   // The rate and what it rests on, always: a forecast whose basis is not
   // stated is a promise rather than an estimate. Eleven weeks of late
   // summer are not a year, and both directions of that error are real -
-  // no sun in January, no heating saved in July.
+  // no sun in January, no more surplus to store in July.
   if (finance.known && finance.days_to_break_even) {
     parts.push(
       `At ${finMoney(rate)} a day, measured over ${fmt(days, 0)} recorded days. ` +
-        `A winter without sun and a summer without heating will both move that.`
+        `A winter without sun will move that.`
+    );
+  }
+  const b = finance.benchmark;
+  if (b && b.break_even_date) {
+    parts.push(
+      `The ${finEscape(b.label)} put it at ${fmt(b.payback_years, 0)} years from ` +
+        `commissioning &mdash; ${finDate(b.break_even_date)}.`
     );
   }
 
@@ -197,6 +250,31 @@ function finRenderTable() {
     ],
     ["<strong>Net investment</strong>", `<strong>${finMoney(inv.net, 2)}</strong>`, ""],
   ];
+  const b = finance.benchmark;
+  if (b) {
+    rows.push([
+      `<strong>${finEscape(b.label)}</strong>`,
+      `<strong>${finMoney(b.net_chf, 2)}</strong>`,
+      `net, at ${fmt(b.kwp, 1)} kWp`,
+    ]);
+    rows.push([
+      "&nbsp;&nbsp;expected yield",
+      `${fmt(b.kwh_per_year, 0)} kWh/year`,
+      `${fmt(b.self_kwh_per_year, 0)} kWh used in the house, ${fmt(
+        b.export_kwh_per_year,
+        0
+      )} kWh exported`,
+    ]);
+    rows.push([
+      "&nbsp;&nbsp;expected return",
+      `${fmt(b.chf_per_year, 0)} ${finance.currency}/year`,
+      `at ${fmt(b.import_chf_per_kwh, 4)} import and ${fmt(
+        b.export_chf_per_kwh,
+        2
+      )} export &mdash; the tariffs the promise was made at`,
+    ]);
+  }
+
   const streamRows = finance.streams.map((s) => [
     s.counted ? s.name : `${s.name} (not counted)`,
     finMoney(s.chf, 2),

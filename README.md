@@ -787,11 +787,52 @@ sum is a fact about the invoice: if the heat pump was bought separately, its
 savings are paying off something else.
 
 What the card does **not** do is annualise. Eleven weeks of late-summer sun
-is not a year, and the error runs both ways - no sun in January, no heating
-saved in July. So the break-even line prints the rate and the number of
-recorded days behind it, and says in as many words that a winter and a
-summer will both move it. A projection that hides its own basis is a
-promise rather than an estimate.
+is not a year. So the break-even line prints the rate and the number of
+recorded days behind it, and says in as many words that a winter will move
+it. A projection that hides its own basis is a promise rather than an
+estimate.
+
+### 15. The benchmark: is it doing what it was sold as doing
+
+A counter answers "how much so far". It does not answer the more useful
+question, which is whether the installation is performing as quoted - and
+that question has an authoritative answer sitting in a drawer, because the
+quote that led to the order contains its own economic model. Putting that
+model into `BENCHMARK_*` turns the card from a counter into a comparison: a
+third bar, dashed because it is a target and not money in hand, showing
+what the quote said would be in the account by now.
+
+Three decisions make the comparison fair rather than flattering:
+
+**It is compared over recorded days, not elapsed days.** Those differ by a
+week here, and the quote has no opinion about a service outage. A rate per
+recorded day measured against a promise per elapsed day would hand the
+installation a free week.
+
+**The quote's tariffs are kept separate from `PRICE_*`.** A promise is
+compared at the prices it was made at, or the comparison measures the
+tariff rather than the roof. The two sets differ here by about 15%, which
+is larger than most of the effects anyone would want to read off this card.
+
+**The quote's straight line is used as the straight line it is.** Its model
+assumes a fixed annual return from year one, with no seasonality, and
+giving it a seasonality it never had would be inventing a document. That
+could have been a problem - comparing a late-summer slice against an annual
+mean usually flatters the measurement - but weighting the quoted annual
+yield by a Swiss monthly profile over this particular window changes the
+result by about one percentage point, because mid-August to the end of
+October happens to land within two percent of the annual daily mean. When
+the recorded window is January or July that will no longer hold, and the
+honest fix then is a longer window rather than a cleverer model.
+
+The card reports two ratios and not one, because they measure different
+things and only mean something together: francs saved against francs
+promised, and kWh produced against kWh promised. They can come apart badly.
+On this installation a battery that was never in the quote keeps nearly
+every kWh in the house at the import tariff, instead of exporting half of
+it at a third of the price - so the money holds up considerably better than
+the production does, and a single blended number would have hidden both
+facts.
 
 ## Setup
 

@@ -161,6 +161,35 @@ class Settings:
     investment_date: str
     finance_return_streams: tuple[str, ...]
 
+    # The yardstick: what the installation was sold as doing. Taken from
+    # the quote that led to the order, so the dashboard can answer "is it
+    # doing what it was supposed to" instead of only "how much so far".
+    # The amounts are in .env with the rest of the money.
+    #
+    # The quote's own economic model is a straight line - a fixed annual
+    # return from year one - and it is used here as the straight line it
+    # is, rather than being given a seasonality the document never had.
+    # For this installation that costs almost nothing: weighting the
+    # quote's annual yield by a Swiss monthly profile over the recorded
+    # window changes the comparison by about one percentage point, because
+    # mid-August to the end of October happens to sit within two percent
+    # of the annual daily mean.
+    #
+    # benchmark_self_kwh_per_year is what the quote expected the house to
+    # use itself; the remainder of the annual yield is what it expected to
+    # be exported, and the two are priced at the quote's own tariffs. That
+    # split is the whole reason to keep the quote's prices separate from
+    # the ones in PRICE_*: the comparison has to be made at the prices the
+    # promise was made at.
+    benchmark_label: str
+    benchmark_kwp: float
+    benchmark_kwh_per_year: float
+    benchmark_self_kwh_per_year: float
+    benchmark_import_chf_per_kwh: float
+    benchmark_export_chf_per_kwh: float
+    benchmark_payback_years: float
+    benchmark_net_chf: float
+
     # One label per connected MPPT input, in order. How many entries there
     # are is how many inputs the dashboard shows, because how many are
     # wired up is a fact about the roof and not something to infer from a
@@ -321,6 +350,20 @@ def load_settings() -> Settings:
         tax_deduction_rate=float(os.environ.get("TAX_DEDUCTION_RATE", "1.0")),
         investment_date=os.environ.get("INVESTMENT_DATE", "").strip(),
         finance_return_streams=_finance_return_streams(),
+        benchmark_label=os.environ.get("BENCHMARK_LABEL", "").strip(),
+        benchmark_kwp=float(os.environ.get("BENCHMARK_KWP", "0")),
+        benchmark_kwh_per_year=float(os.environ.get("BENCHMARK_KWH_PER_YEAR", "0")),
+        benchmark_self_kwh_per_year=float(
+            os.environ.get("BENCHMARK_SELF_KWH_PER_YEAR", "0")
+        ),
+        benchmark_import_chf_per_kwh=float(
+            os.environ.get("BENCHMARK_IMPORT_CHF_PER_KWH", "0")
+        ),
+        benchmark_export_chf_per_kwh=float(
+            os.environ.get("BENCHMARK_EXPORT_CHF_PER_KWH", "0")
+        ),
+        benchmark_payback_years=float(os.environ.get("BENCHMARK_PAYBACK_YEARS", "0")),
+        benchmark_net_chf=float(os.environ.get("BENCHMARK_NET_CHF", "0")),
         pv_string_names=_pv_string_names(),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),

@@ -164,6 +164,62 @@ def _tariff() -> dict:
     }
 
 
+def _benchmark(recorded_days: float, pv_kwh: float, returned_chf: float) -> dict | None:
+    """What the quote said the installation would do, measured against it.
+
+    The quote is a straight line by construction - a fixed annual return
+    from the first year - so it is used as one. The comparison is made over
+    the days that were actually recorded rather than the days that have
+    elapsed, because those differ by a week here and the quote has no
+    opinion about a service outage.
+    """
+    year_kwh = settings.benchmark_kwh_per_year
+    if year_kwh <= 0:
+        return None
+    self_kwh = min(settings.benchmark_self_kwh_per_year, year_kwh)
+    export_kwh = max(0.0, year_kwh - self_kwh)
+    # Priced at the quote's own tariffs, not at PRICE_*: a promise is
+    # compared at the prices it was made at, or the comparison measures the
+    # tariff rather than the roof.
+    chf_year = (
+        self_kwh * settings.benchmark_import_chf_per_kwh
+        + export_kwh * settings.benchmark_export_chf_per_kwh
+    )
+    kwh_day = year_kwh / 365.0
+    chf_day = chf_year / 365.0
+    expected_kwh = kwh_day * recorded_days
+    expected_chf = chf_day * recorded_days
+
+    when = None
+    if settings.investment_date and settings.benchmark_payback_years > 0:
+        try:
+            when = date.fromisoformat(settings.investment_date) + timedelta(
+                days=round(settings.benchmark_payback_years * 365.25)
+            )
+        except ValueError:
+            when = None
+
+    return {
+        "label": settings.benchmark_label or "Quote",
+        "kwp": settings.benchmark_kwp,
+        "kwh_per_year": round(year_kwh, 1),
+        "self_kwh_per_year": round(self_kwh, 1),
+        "export_kwh_per_year": round(export_kwh, 1),
+        "import_chf_per_kwh": settings.benchmark_import_chf_per_kwh,
+        "export_chf_per_kwh": settings.benchmark_export_chf_per_kwh,
+        "chf_per_year": round(chf_year, 2),
+        "chf_per_day": round(chf_day, 2),
+        "kwh_per_day": round(kwh_day, 2),
+        "net_chf": round(settings.benchmark_net_chf, 2),
+        "payback_years": settings.benchmark_payback_years,
+        "break_even_date": when.isoformat() if when else None,
+        "expected_kwh_to_date": round(expected_kwh, 1),
+        "expected_chf_to_date": round(expected_chf, 2),
+        "production_pct": round(100.0 * pv_kwh / expected_kwh, 1) if expected_kwh > 0 else None,
+        "return_pct": round(100.0 * returned_chf / expected_chf, 1) if expected_chf > 0 else None,
+    }
+
+
 def _oil_equivalent() -> dict:
     """How many litres of heating oil a kWh of the pump's electricity is.
 
@@ -299,6 +355,18 @@ async def finance() -> dict:
     # Forecast only when there is an invoice to forecast against and the
     # thing is actually earning. Without those the honest answer is no
     # answer rather than a date at infinity.
+    # Days since the installation went live, which is not the same as days
+    # recorded: the difference is service downtime, and saying both keeps a
+    # rate per recorded day from being read as a rate per day.
+    elapsed: float | None = None
+    if settings.investment_date:
+        try:
+            elapsed = round(
+                (date.today() - date.fromisoformat(settings.investment_date)).days, 2
+            )
+        except ValueError:
+            elapsed = None
+
     known = settings.investment_chf > 0
     days_left: int | None = None
     when: date | None = None
@@ -323,7 +391,11 @@ async def finance() -> dict:
             "first_record": store.first_timestamp(),
             "earning_since": settings.investment_date or None,
             "recorded_days": round(days, 2),
+            "elapsed_days": elapsed,
+            "pv_kwh": round(totals["pv"] or 0.0, 1),
+            "pv_kwh_per_day": round((totals["pv"] or 0.0) / days, 2) if days > 0 else None,
         },
+        "benchmark": _benchmark(days, totals["pv"] or 0.0, returned),
         "streams": streams,
         "returned_chf": returned,
         "remaining_chf": remaining,
