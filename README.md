@@ -89,7 +89,8 @@ while a running one is left to the AskoHeat's own ~65°C cutoff.
 - `app/main.py` - FastAPI app serving `/api/live`, `/api/history`, and the
   four static pages in `app/static/`
 
-The pages are `/` (the house: power, roof sides, battery), `/asko`, `/wallbox`
+The pages are `/` (the house: power, roof sides, compressor runs, battery),
+`/asko`, `/wallbox`
 and `/energy`. The first three are one script, `app/static/app.js`: they read
 the same two endpoints and what a page draws is decided by which containers
 its HTML has, so every renderer tolerates its own absence rather than
@@ -639,6 +640,68 @@ standby, so all five y ticks said "0.0" and the repeat-dedupe left one
 label above four blank gridlines. The axis now takes as many decimals as it
 needs to separate its own ticks.
 
+### 12. The heat pump heats at night, and nothing can be asked why
+
+The heat pump is a CTA Optiheat 1-5es: a Siemens RVS61 controller behind an
+OCI670 gateway. Section 10's conclusion about the charger does not transfer
+here, because this machine has no readable interface at all. Port 502 is
+closed, the gateway's own web endpoints answer `auth failed`, and the
+OCI670 cannot speak Modbus in any configuration - the retrofit for that is
+a separate module (OCI 351.01/109) plus an Optiplus controller of a recent
+enough series. So no setpoint, no operating mode, no flow temperature can
+be read, and nothing can be written. The clamp meter on its feed is the
+only witness to what the controller decided.
+
+It turns out to be enough, because the three things this machine can be
+doing are far apart in watts:
+
+| State | Measured |
+|---|---|
+| Controller alone | 0.035 kW, around the clock |
+| A circulation pump turning | 0.13-0.14 kW, L3 only |
+| Compressor running | 1.10-1.21 kW, unbalanced across the phases |
+
+A threshold at 0.5 kW therefore separates "heating" from "idling" with two
+orders of magnitude of room on either side, and that is all a run detector
+needs. `heatpump_runs` walks the recorded samples, groups the ones above
+the threshold into runs, and measures each one: start, end, duration,
+energy, mean and peak power. A break longer than ten minutes starts a new
+run, so a service restart in the middle of one does not produce a single
+run that covers the outage. Energy is power times interval like every other
+figure here rather than the clamp's own counter, which restarts with the
+device and would read a straddling run as the meter's entire lifetime.
+
+The useful comparison is against the hours the pump is *meant* to run in
+(`HEATPUMP_WINDOW_FROM_H`, `HEATPUMP_WINDOW_TO_H`). That window is not a
+control and cannot become one - nothing here can switch this machine - it
+is only the line the record is measured against. Energy outside it is
+classified per sample rather than per run, so a run from 07:30 to 08:30 is
+half a breach instead of being rounded to a whole answer either way.
+
+**The chart is a clock, not a bar chart**, because the question is *when*
+and not how much: 00:00 to 24:00 across, one row per day down, the intended
+window shaded behind the rows. A run outside the window then needs no
+colour of its own to read as wrong - it is a bar sitting outside the band -
+and days stacked under each other turn a change made at the controller into
+a before-and-after that can be seen rather than remembered. Lowering a
+reduced setpoint is one line of evidence per night after that, instead of
+an impression.
+
+Two blanks mean opposite things on a chart like this, so they cannot look
+alike: a day with no run is the result a time program is supposed to
+produce, while a day before the clamp was fitted is nobody having looked.
+The recorded span is hatched where it ends, rows begin at the first day
+there is a record for, and a recorded day with no run says "none" where an
+unrecorded one says nothing.
+
+What the measurement showed on the first night: five runs between 18:39 and
+07:27, each 55-60 minutes at a flat 1.15 kW, with the pauses between them
+shrinking from 2 h 37 to 1 h 35 as the night got colder. A hot-water
+recharge has no reason to tighten its cadence as the outside temperature
+falls; a weather-compensated heating circuit does exactly that. The shape
+of the record identified which of two settings was responsible, which is
+the kind of question that otherwise needs a controller one can read.
+
 ## Setup
 
 ```
@@ -844,6 +907,11 @@ sides stand in for a total they do not add up to.
 - The heater is regulated one step per poll, so it takes a few minutes to
   work its way up to the right step after a change in conditions. That is
   deliberate - the steps switch mechanical relays in the AskoHeat.
+- The heat pump's controller cannot be read or written at all through its
+  OCI670 gateway, so everything the dashboard shows about it is inferred
+  from a clamp meter on its feed: when the compressor ran and what it drew,
+  never why. Whether a run was heating or a hot-water charge has to be read
+  off the shape of the record or off the machine's own display.
 - Register addresses and the value-derivation formulas above are specific to
   this particular installation (GoodWe GW15K-ETA-G20 hybrid inverter +
   AskoHeat+) and firmware version, and may not generalize to other models.
