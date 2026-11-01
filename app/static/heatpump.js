@@ -320,7 +320,7 @@ function hpRenderNote() {
   // span is wholly outside the window, so this is the same energy the
   // sentence just named, not a second figure.
   const litres = hpRuns.oil && hpRuns.oil.litres_per_kwh
-    ? ` That is the heat an oil boiler would have burned ${fmt(kwh * hpRuns.oil.litres_per_kwh, 2)} l for.`
+    ? ` An oil boiler would have burned ${fmt(kwh * hpRuns.oil.litres_per_kwh, 2)} l for the same heat.`
     : "";
   const text = good
     ? `${when}, ${span}: nothing ran.`
