@@ -250,7 +250,7 @@ function finRenderTable() {
       "Tax deduction",
       `-${finMoney(inv.tax_benefit, 2)}`,
       inv.tax_rate === 1
-        ? `${finMoney(inv.tax_deduction, 0)} taken at face value - set TAX_DEDUCTION_RATE to the marginal tax rate for the money it actually saved`
+        ? "entered as money, not as a deductible amount"
         : `${fmt(100 * inv.tax_rate, 0)}% of ${finMoney(inv.tax_deduction, 0)}`,
     ],
     ["<strong>Net investment</strong>", `<strong>${finMoney(inv.net, 2)}</strong>`, ""],
@@ -301,16 +301,28 @@ function finRenderTable() {
           .join("")}
       </tbody>
     </table>
-    <p class="chart-note">
-      Measured from ${finance.measured.first_record ? finDate(finance.measured.first_record) : "-"}
-      ${
-        finance.measured.earning_since
-          ? `, although the installation has been earning since ${finDate(
-              finance.measured.earning_since
-            )} - the months before the recording started are not in the figures above.`
-          : "."
-      }
-    </p>`;
+    <p class="chart-note">${finWindowNote()}</p>`;
+}
+
+// Recorded days are not elapsed days. The difference is service downtime,
+// and the installation went on saving through it unobserved - so the
+// figures above are a floor, and every rate here is per recorded day.
+function finWindowNote() {
+  const m = finance.measured;
+  const start = m.earning_since || m.first_record;
+  const from = start ? finDate(start) : null;
+  if (!from) return "No record yet.";
+  if (m.elapsed_days === null || m.elapsed_days === undefined) {
+    return `Measured from ${from}.`;
+  }
+  const missing = m.elapsed_days - m.recorded_days;
+  if (missing < 0.5) return `Measured from ${from}, with no gaps.`;
+  return (
+    `${fmt(m.recorded_days, 0)} of the ${fmt(m.elapsed_days, 0)} days since ${from} are in ` +
+    `these figures. The other ${fmt(missing, 0)} are service downtime, which the ` +
+    `installation went on saving through unobserved - so every total here is a floor, ` +
+    `and every rate is per recorded day.`
+  );
 }
 
 async function fetchFinance() {
