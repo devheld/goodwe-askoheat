@@ -64,7 +64,7 @@ function finRenderVerdict() {
   const node = el("financeVerdict");
   if (!node) return;
   const muted = cssVar("--text-muted");
-  let color = cssVar("--baseline");
+  let color = cssVar("--text-muted");
   let text;
   if (!finance.known) {
     // No invoice, no break-even. Saying so beats reporting a payback
@@ -88,25 +88,28 @@ function finRenderBars() {
   const wrap = el("financeWrap");
   if (!wrap) return;
 
-  const net = finance.investment.net;
-  const back = finance.returned_chf;
-  // Only bars that mean something: without an invoice there is no target
-  // to draw, and the return bar then simply shows what has been saved.
-  const bars = [];
-  if (finance.known) {
-    bars.push({
+  // No invoice, no bars. A lone bar would be scaled against itself and
+  // run the full width, which reads as a finished job - the exact wrong
+  // impression. The figure is in the verdict line either way.
+  if (!finance.known) {
+    wrap.innerHTML = "";
+    return;
+  }
+
+  const bars = [
+    {
       name: "Net investment",
-      value: net,
+      value: finance.investment.net,
       fill: cssVar("--gridline"),
       stroke: cssVar("--baseline"),
-    });
-  }
-  bars.push({
-    name: "Saved so far",
-    value: back,
-    fill: cssVar("--series-grid-export"),
-    stroke: null,
-  });
+    },
+    {
+      name: "Saved so far",
+      value: finance.returned_chf,
+      fill: cssVar("--series-grid-export"),
+      stroke: null,
+    },
+  ];
 
   const width = chartWidth(wrap);
   const max = Math.max(...bars.map((b) => Math.abs(b.value)), 1);
