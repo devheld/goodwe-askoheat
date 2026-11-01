@@ -109,21 +109,10 @@ function finRenderBars() {
   // account, and the one bar here that was never measured. Dashed rather
   // than tinted, so the three bars are told apart by their treatment and
   // their own labels instead of by three hues.
-  if (finance.benchmark) {
-    bars.push({
-      // Priced at this household's tariffs, because the bar below it is:
-      // two bars in two different currencies-per-kWh would be a race on
-      // different tracks.
-      name:
-        finance.benchmark.no_export_days > 0.5
-          ? "The quote's plan, minus what I may not sell"
-          : "The quote's plan, at my tariffs",
-      value: finance.benchmark.expected_chf_to_date_at_my_tariffs,
-      fill: "none",
-      stroke: cssVar("--text-muted"),
-      dash: "5 3",
-    });
-  }
+  // Two bars and no more. The benchmark lives in the sentence under the
+  // chart rather than on this axis: it spans a different window, and a
+  // window bar scaled against the whole investment would be a few pixels
+  // of nothing next to a counter that covers months.
   bars.push({
     name: "Saved so far",
     value: finance.returned_chf,
@@ -174,43 +163,52 @@ function finRenderBenchmark() {
     node.textContent = "";
     return;
   }
-  const m = finance.measured;
-  const parts = [
-    `Against the ${finEscape(b.label)}, over the ${fmt(m.recorded_days, 0)} recorded days:`,
-    `<strong>${fmt(finance.returned_chf, 0)} ${finance.currency} saved where its plan would have ` +
-      `earned ${fmt(b.expected_chf_to_date_at_my_tariffs, 0)} at my tariffs` +
-      (b.return_pct === null ? "" : ` (${fmt(b.return_pct, 0)}%)`) +
-      `</strong>,`,
-    `and ${fmt(m.pv_kwh_per_day, 1)} kWh a day produced where it promised ` +
-      `${fmt(b.kwh_per_day, 1)}` +
-      (b.production_pct === null ? "" : ` (${fmt(b.production_pct, 0)}%)`) +
-      `.`,
+
+  // Why the window exists, stated before any number from it. Under an
+  // export ban the inverter is held to the house's own load: the moment
+  // production would have passed the load and a full battery, it was
+  // throttled. So those months record a permit, not a roof, and no ratio
+  // against a predicted annual yield can be read off them - the size of
+  // the error is not knowable, and nor is its sign.
+  const excluded = b.excluded_days > 0.5;
+  const prefix = excluded
+    ? `<em>The first ${fmt(b.excluded_days, 0)} recorded days are excluded: with no feed-in ` +
+      `permitted, the inverter was held to the house's own consumption, so the roof was never ` +
+      `allowed to show its output and nothing can be concluded from what it produced. The ` +
+      `savings from that time are real money and stay in the counter above.</em>`
+    : "";
+
+  if (!b.window_from) {
+    node.innerHTML =
+      prefix +
+      ` No comparison with the ${finEscape(b.label)} is possible yet: set ` +
+      `<code>EXPORT_ALLOWED_FROM</code> to the day feed-in was approved and the benchmark ` +
+      `starts counting there.`;
+    return;
+  }
+
+  if (!b.ready) {
+    node.innerHTML =
+      prefix +
+      ` The comparison with the ${finEscape(b.label)} starts ${finDate(b.window_from)}: ` +
+      `<strong>${fmt(b.window_days, 1)} of the ${fmt(b.min_days, 0)} days</strong> it needs ` +
+      `before a ratio means anything.`;
+    return;
+  }
+
+  // Two ratios, because they say different things and only together: the
+  // money ratio is what the household gets, the production ratio is what
+  // the roof does. A battery the quote did not include keeps more in the
+  // house than its plan assumed, so the two can come apart.
+  node.innerHTML =
+    prefix +
+    ` Against the ${finEscape(b.label)}, over the ${fmt(b.window_days, 0)} days since ` +
+    `${finDate(b.window_from)}: <strong>${fmt(b.measured_chf, 0)} ${finance.currency} earned ` +
+    `where its plan would have earned ${fmt(b.expected_chf_to_date_at_my_tariffs, 0)} at my ` +
+    `tariffs (${fmt(b.return_pct, 0)}%), and ${fmt(b.measured_kwh_per_day, 1)} kWh a day ` +
+    `produced where it promised ${fmt(b.kwh_per_day, 1)} (${fmt(b.production_pct, 0)}%)</strong>. ` +
     `Its own figure, at its own ${fmt(b.import_chf_per_kwh, 4)}/kWh, was ` +
-      `${fmt(b.expected_chf_to_date, 0)} ${finance.currency}.`,
-  ];
-  // The quote counted on selling half the annual yield. Until feed-in was
-  // approved that revenue was not available at any price, so it is taken
-  // out of the plan rather than scored against the installation.
-  if (b.no_export_days > 0.5) {
-    parts.push(
-      `<em>Feed-in was not permitted for ${fmt(b.no_export_days, 0)} of those days` +
-        (b.export_allowed_from ? `, until ${finDate(b.export_allowed_from)}` : "") +
-        `, so the ${fmt(b.export_chf_per_year, 0)} ${finance.currency} a year of export ` +
-        `revenue the quote counted on could not be earned. Its plan is priced without it ` +
-        `for those days.</em>`
-    );
-  }
-  // And with nowhere to send a surplus, the inverter throws some away -
-  // so the production figure is a floor on what the roof can do, not a
-  // measurement of it.
-  if (m.curtailed_kwh > 0.5) {
-    parts.push(
-      `${fmt(m.curtailed_kwh, 0)} kWh of surplus had nowhere to go in that time ` +
-        (m.curtailed_pct_of_pv === null ? "" : `(${fmt(m.curtailed_pct_of_pv, 1)}% of production) `) +
-        `&mdash; the production figure is a floor, not a ceiling.`
-    );
-  }
-  node.innerHTML = parts.join(" ");
+    `${fmt(b.expected_chf_to_date, 0)} ${finance.currency}.`;
 }
 
 function finRenderForecast() {
@@ -269,7 +267,10 @@ function finRenderTable() {
   if (!host) return;
   const inv = finance.investment;
   const rows = [
-    ["Invoice total", finMoney(inv.gross, 2), finance.known ? "" : "not entered yet"],
+    ["Invoice total", finMoney(inv.invoice, 2), finance.known ? "" : "not entered yet"],
+    ...(inv.extra
+      ? [[finEscape(inv.extra_label), `+${finMoney(inv.extra, 2)}`, "paid outside the solar contract"]]
+      : []),
     ["Grant received", `-${finMoney(inv.subsidy, 2)}`, ""],
     [
       "Tax deduction",

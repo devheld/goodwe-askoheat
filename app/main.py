@@ -210,6 +210,7 @@ def _priced(buckets: list[dict]) -> dict:
         "avoided": 0.0,
         "consumption_value": 0.0,
         "self_consumed_kwh": 0.0,
+        "pv_kwh": 0.0,
         "pv_self_chf": 0.0,
         "pv_export_chf": 0.0,
         "heatpump_chf": 0.0,
@@ -219,7 +220,6 @@ def _priced(buckets: list[dict]) -> dict:
         "plan_days": 0.0,
         "plan_import_days": 0.0,
         "plan_export_days": 0.0,
-        "no_export_days": 0.0,
     }
     w_imp = w_exp = weight = 0.0
     seen: set[tuple[float, float]] = set()
@@ -232,6 +232,7 @@ def _priced(buckets: list[dict]) -> dict:
         out["avoided"] += own * imp
         out["consumption_value"] += (row["consumption"] or 0.0) * imp
         out["self_consumed_kwh"] += own
+        out["pv_kwh"] += row["pv"] or 0.0
         out["pv_self_chf"] += own * imp
         out["pv_export_chf"] += (row["grid_export"] or 0.0) * exp
         out["heatpump_chf"] += (row["heatpump"] or 0.0) * imp
@@ -244,8 +245,6 @@ def _priced(buckets: list[dict]) -> dict:
         out["plan_days"] += day_weight
         out["plan_import_days"] += imp * day_weight
         out["plan_export_days"] += (exp if allowed else 0.0) * day_weight
-        if not allowed:
-            out["no_export_days"] += day_weight
     fallback = _rate_at(date.today())
     out["import_per_kwh"] = round(w_imp / weight, 4) if weight > 0 else fallback[0]
     out["export_per_kwh"] = round(w_exp / weight, 4) if weight > 0 else fallback[1]
@@ -279,16 +278,21 @@ def _tariff(priced: dict | None = None) -> dict:
     }
 
 
-def _benchmark(
-    recorded_days: float, pv_kwh: float, returned_chf: float, priced: dict
-) -> dict | None:
+def _benchmark(priced: dict, window: dict, total_days: float) -> dict | None:
     """What the quote said the installation would do, measured against it.
 
-    The quote is a straight line by construction - a fixed annual return
-    from the first year - so it is used as one. The comparison is made over
-    the days that were actually recorded rather than the days that have
-    elapsed, because those differ by a week here and the quote has no
-    opinion about a service outage.
+    `window` is the priced span the comparison is allowed to use: the
+    months from the day feed-in was permitted. Everything earlier is
+    excluded on purpose. Under an export ban the inverter is held to the
+    house's own consumption, so the roof was never permitted to show its
+    output and the recorded production is a permit, not a measurement. A
+    ratio against a predicted annual yield would be meaningless in both
+    directions, and the sign of the error is not even knowable.
+
+    Inside the window the quote is used as the straight line it is - a
+    fixed annual return from year one - and compared over days actually
+    recorded rather than days elapsed, since the quote has no opinion
+    about a service outage.
 
     The quoted energy plan is priced twice on purpose. At the quote's own
     tariffs it reproduces the figure the quote printed, which is what its
@@ -314,15 +318,20 @@ def _benchmark(
     sell = priced["export_per_kwh"]
     chf_year_mine = self_kwh * buy + export_kwh * sell
     kwh_day = year_kwh / 365.0
-    expected_kwh = kwh_day * recorded_days
-    expected_chf = chf_year / 365.0 * recorded_days
-    # The quote's flat daily plan, priced day by day at that day's tariff,
-    # with its export half dropped for every day feed-in was not permitted
-    # on. Those francs were not missed, they were unavailable.
+
+    # Everything from here is the window only.
+    window_days = window["plan_days"]
+    pv_kwh = window["pv_kwh"]
+    measured_chf = window["pv_self_chf"] + window["pv_export_chf"]
+    expected_kwh = kwh_day * window_days
+    expected_chf = chf_year / 365.0 * window_days
+    # The quote's flat daily plan, priced day by day at the tariff of the
+    # year that day fell in.
     expected_chf_mine = (
-        self_kwh / 365.0 * priced["plan_import_days"]
-        + export_kwh / 365.0 * priced["plan_export_days"]
+        self_kwh / 365.0 * window["plan_import_days"]
+        + export_kwh / 365.0 * window["plan_export_days"]
     )
+    ready = window_days >= settings.benchmark_min_days and bool(settings.export_allowed_from)
 
     when = None
     if settings.investment_date and settings.benchmark_payback_years > 0:
@@ -348,22 +357,32 @@ def _benchmark(
         "net_chf": round(settings.benchmark_net_chf, 2),
         "payback_years": settings.benchmark_payback_years,
         "break_even_date": when.isoformat() if when else None,
+        "window_from": settings.export_allowed_from or None,
+        "window_days": round(window_days, 1),
+        "excluded_days": round(max(0.0, total_days - window_days), 1),
+        "min_days": settings.benchmark_min_days,
+        "ready": ready,
+        "measured_kwh": round(pv_kwh, 1),
+        "measured_kwh_per_day": round(pv_kwh / window_days, 2) if window_days > 0 else None,
+        "measured_chf": round(measured_chf, 2),
         "expected_kwh_to_date": round(expected_kwh, 1),
         "expected_chf_to_date": round(expected_chf, 2),
         "expected_chf_to_date_at_my_tariffs": round(expected_chf_mine, 2),
-        "no_export_days": round(priced["no_export_days"], 1),
-        "export_allowed_from": settings.export_allowed_from or None,
-        # What the quote expected to earn from export in a year, which is
-        # what the ban cost - at the quote's own export price.
+        # What the quote expected from export in a year, which is what the
+        # ban made unavailable - at the quote's own export price.
         "export_chf_per_year": round(
             export_kwh * settings.benchmark_export_chf_per_kwh, 2
         ),
-        "production_pct": round(100.0 * pv_kwh / expected_kwh, 1) if expected_kwh > 0 else None,
+        "production_pct": (
+            round(100.0 * pv_kwh / expected_kwh, 1) if ready and expected_kwh > 0 else None
+        ),
         # Against the plan priced at this household's tariffs, so the ratio
         # is about the roof and the share kept in the house - not about the
         # 15% the two tariff sheets happen to differ by.
         "return_pct": (
-            round(100.0 * returned_chf / expected_chf_mine, 1) if expected_chf_mine > 0 else None
+            round(100.0 * measured_chf / expected_chf_mine, 1)
+            if ready and expected_chf_mine > 0
+            else None
         ),
     }
 
@@ -452,12 +471,19 @@ async def finance() -> dict:
     # cross several price changes, and re-pricing history at today's rate
     # would move money that was already earned.
     priced = _priced(energy["buckets"])
+    # The benchmark's window: the buckets from the day feed-in was
+    # permitted. A month counts only if its first day is inside, which
+    # errs toward a shorter window - the safe direction for a comparison.
+    window = _priced(
+        [r for r in energy["buckets"] if _export_allowed(_bucket_day(r["bucket"]))]
+    )
     buy = priced["import_per_kwh"]
     sell = priced["export_per_kwh"]
     oil = _oil_equivalent()
 
     tax_benefit = settings.tax_deduction_chf * settings.tax_deduction_rate
-    net = settings.investment_chf - settings.subsidy_chf - tax_benefit
+    gross = settings.investment_chf + settings.investment_extra_chf
+    net = gross - settings.subsidy_chf - tax_benefit
 
     # Each stream is divided by the hours it was actually recorded over,
     # not by the calendar. The clamp on the heat pump went in eleven weeks
@@ -541,7 +567,10 @@ async def finance() -> dict:
         "currency": "CHF",
         "known": known,
         "investment": {
-            "gross": round(settings.investment_chf, 2),
+            "gross": round(gross, 2),
+            "invoice": round(settings.investment_chf, 2),
+            "extra": round(settings.investment_extra_chf, 2),
+            "extra_label": settings.investment_extra_label,
             "subsidy": round(settings.subsidy_chf, 2),
             "tax_deduction": round(settings.tax_deduction_chf, 2),
             "tax_rate": settings.tax_deduction_rate,
@@ -556,10 +585,8 @@ async def finance() -> dict:
             "elapsed_days": elapsed,
             "pv_kwh": round(totals["pv"] or 0.0, 1),
             "pv_kwh_per_day": round((totals["pv"] or 0.0) / days, 2) if days > 0 else None,
-            "curtailed_kwh": round(energy["losses"]["curtailed_kwh"] or 0.0, 1),
-            "curtailed_pct_of_pv": energy["losses"]["curtailed_pct_of_pv"],
         },
-        "benchmark": _benchmark(days, totals["pv"] or 0.0, returned, priced),
+        "benchmark": _benchmark(priced, window, days),
         "streams": streams,
         "returned_chf": returned,
         "remaining_chf": remaining,

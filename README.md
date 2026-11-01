@@ -860,30 +860,53 @@ This is also why the quote's tariffs live in `BENCHMARK_*` and not in
 assumption inside someone else's model, and the benchmark needs them to
 reproduce the figure that model printed.
 
-### 17. Revenue that was not available is not revenue that was missed
+### 17. Under an export ban, output is a permit and not a measurement
 
-Feed-in needed the utility's approval, and it arrived months after the
-roof did. Until then surplus could not be sold at any price: it went into
-the battery, into the hot water tank, or was thrown away by the inverter.
-The quote, meanwhile, had half the annual yield going to the grid - 6700 of
-15100 kWh - and counted the revenue.
+Feed-in needs the utility's approval, and it arrives after the roof does.
+Until it comes the inverter is held to the house's own consumption: the
+moment production would pass the load and a full battery, it is throttled.
 
-Comparing the two directly would score the installation against something
-it was not permitted to do, which measures the paperwork and not the roof.
-So `EXPORT_ALLOWED_FROM` splits the record, and for days before it the
-quote's daily plan is priced with its export half removed. The card says
-so in as many words, with the annual figure that was unavailable, because
-a benchmark that silently adjusts itself is worse than one that does not
-adjust at all.
+The first instinct is to treat that as a known loss and correct for it -
+publish the curtailed kWh, subtract the export revenue the quote expected,
+compare what is left. That instinct is wrong, and the reason is worth
+writing down. The curtailment this project can measure is the surplus the
+**AskoHeat** could not place; it cannot see the production the inverter
+never made, because nothing records a kilowatt-hour that was declined. The
+roof has never once been allowed to show its maximum. A ratio of recorded
+production against a predicted annual yield is therefore not merely
+imprecise, it is uninterpretable: the size of the error is unknown and so
+is its sign.
 
-The same ban bends the production figure, and in the harder direction. With
-nowhere to send a surplus the inverter throttles, so measured production is
-a floor on what the roof can do rather than a measurement of it. The honest
-response is to publish the curtailed kWh next to the production ratio and
-let the reader see how large the correction could be - on this installation
-about 3% of production, which is small enough that the shortfall against
-the quote survives it intact. The money comparison is the one the ban
-distorts massively; the production comparison it barely touches.
+So the benchmark does not correct those months, it excludes them.
+`EXPORT_ALLOWED_FROM` opens the comparison window and nothing before it
+counts toward either ratio. Two things follow:
+
+- **The savings from the excluded months stay in the counter.** They are
+  measured francs that were really not spent, and the payback is a cash
+  question. Only the comparison needs a clean window; the money does not.
+- **A window needs a length before it means anything.**
+  `BENCHMARK_MIN_DAYS` holds the ratios back until there are enough days,
+  and until then the card says how many of them it has. A percentage
+  computed from four days of November is noise with a decimal point, and a
+  card that prints one teaches its reader to stop believing it.
+
+The honest statement about the excluded period is that it cannot be
+judged, and that is what the card says. A back-estimate becomes possible
+later - once some unthrottled months exist, they calibrate what the
+throttled ones could have produced - but it would be an estimate built on
+the window, so the window has to come first.
+
+### 18. Costs that are not on the invoice are still costs
+
+The quote priced a roof. What was built is a roof, a battery, a heat
+pump's clamp, an immersion heater and a wallbox, and the wallbox was paid
+for outside the solar contract. `INVESTMENT_EXTRA_CHF` exists so that it
+lands on the same page as its own effect, because the effect is large and
+in the flattering direction: a car is the biggest single reason
+self-consumption runs above the quoted plan, and the quote's closing
+paragraph says as much in its own words. Counting the charging in the
+savings while leaving the charger out of the cost would be a payback
+calculation with its thumb on the scale.
 
 ## Setup
 

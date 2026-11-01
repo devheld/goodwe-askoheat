@@ -186,6 +186,13 @@ class Settings:
     #   the investment. Heating-instead-of-oil belongs there only if the
     #   heat pump was on the same invoice.
     investment_chf: float
+    # Real money that is not on the invoice. The wallbox was installed and
+    # paid for outside the solar contract, and leaving it out would flatter
+    # the payback while its charging sits in the savings - the car is the
+    # largest single reason self-consumption is above the quoted plan, so
+    # the cost of being able to charge it belongs on the same page.
+    investment_extra_chf: float
+    investment_extra_label: str
     subsidy_chf: float
     tax_deduction_chf: float
     tax_deduction_rate: float
@@ -265,15 +272,28 @@ class Settings:
     # stay as the fallback for years before the first entry.
     tariffs: tuple[tuple[int, float, float], ...]
 
-    # The date feed-in was permitted from. Before it, surplus could not be
-    # sold at any price: it went into the battery, into the hot water, or
-    # was thrown away by the inverter. That is not a missed opportunity,
-    # it is one that did not exist, so the benchmark must not expect
-    # export revenue for those days - the quote assumed half the annual
-    # yield would be exported, and comparing against that would score the
-    # installation against something it was not allowed to do. Blank means
-    # export was always permitted.
+    # The date feed-in was permitted from, and the only date from which
+    # this installation's output means anything.
+    #
+    # Before it the inverter was held to the house's own consumption. It
+    # did not merely lose the export revenue the quote counted on - it was
+    # never allowed to show what the roof can do, because the moment
+    # production would have exceeded the load and a full battery, it was
+    # throttled. So the recorded production for those months is a ceiling
+    # imposed by a permit, not a measurement of a roof, and no comparison
+    # with a predicted annual yield can be drawn from it in either
+    # direction. The measured savings from that time are real money and
+    # stay in the counter; the benchmark simply starts later.
+    #
+    # Blank means there is no valid comparison window yet, and the card
+    # says so instead of computing a ratio out of throttled months.
     export_allowed_from: str
+
+    # How many recorded days inside that window before ratios are shown at
+    # all. A percentage from four days of November is noise with a decimal
+    # point, and a benchmark that prints one teaches the reader to ignore
+    # it.
+    benchmark_min_days: float
 
     # Usable battery capacity in kWh, needed to tell a round-trip loss from
     # energy that is simply still in the battery. Not readable over Modbus
@@ -392,6 +412,10 @@ def load_settings() -> Settings:
         oil_boiler_efficiency=float(os.environ.get("OIL_BOILER_EFFICIENCY", "0.85")),
         oil_price_chf_per_litre=float(os.environ.get("OIL_PRICE_CHF_PER_LITRE", "1.78")),
         investment_chf=float(os.environ.get("INVESTMENT_CHF", "0")),
+        investment_extra_chf=float(os.environ.get("INVESTMENT_EXTRA_CHF", "0")),
+        investment_extra_label=os.environ.get(
+            "INVESTMENT_EXTRA_LABEL", "Not on the invoice"
+        ).strip(),
         subsidy_chf=float(os.environ.get("SUBSIDY_CHF", "0")),
         tax_deduction_chf=float(os.environ.get("TAX_DEDUCTION_CHF", "0")),
         tax_deduction_rate=float(os.environ.get("TAX_DEDUCTION_RATE", "1.0")),
@@ -430,6 +454,7 @@ def load_settings() -> Settings:
         ),
         tariffs=_tariffs(),
         export_allowed_from=os.environ.get("EXPORT_ALLOWED_FROM", "").strip(),
+        benchmark_min_days=float(os.environ.get("BENCHMARK_MIN_DAYS", "14")),
         battery_capacity_kwh=float(os.environ.get("BATTERY_CAPACITY_KWH", "27")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/home-energy.db"),
     )
