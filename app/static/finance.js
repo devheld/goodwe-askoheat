@@ -255,6 +255,19 @@ function finRenderTable() {
     ],
     ["<strong>Net investment</strong>", `<strong>${finMoney(inv.net, 2)}</strong>`, ""],
   ];
+  // The tariff history, because a counter that runs for years is priced
+  // by it and the rate is not one number.
+  const hist = (finance.tariff && finance.tariff.history) || [];
+  if (hist.length) {
+    rows.push([
+      "Tariff",
+      hist
+        .map((h) => `${fmt(h.import_chf_per_kwh ?? h.import_per_kwh, 4)}`)
+        .join(" &rarr; "),
+      `import, from ${hist.map((h) => h.from).join(" and ")} &mdash; each month is priced at the rate in force then`,
+    ]);
+  }
+
   const b = finance.benchmark;
   if (b) {
     rows.push([

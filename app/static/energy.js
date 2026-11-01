@@ -202,14 +202,14 @@ function renderKpis(energy) {
       label: "Grid import",
       value: kwh(t.grid_import),
       money: money(c.spent),
-      sub: `Bought at ${money(state.tariff.import_per_kwh)}/kWh`,
+      sub: `Bought at ${tariffLabel("import")}/kWh`,
       color: "--e-import",
     },
     {
       label: "Grid export",
       value: kwh(t.grid_export),
       money: money(c.earned),
-      sub: `Exported at ${money(state.tariff.export_per_kwh)}/kWh`,
+      sub: `Exported at ${tariffLabel("export")}/kWh`,
       color: "--e-export",
     },
     {
@@ -320,6 +320,16 @@ function oilEquivalent(energy) {
       `the clamp measures electricity, never heat.`,
     color: "--e-heatpump",
   };
+}
+
+// A price for a period that crossed a tariff change is an average, and
+// has to look like one: the figures above it were each priced at the rate
+// in force at the time, so a bare number here would claim one price was
+// used throughout.
+function tariffLabel(kind) {
+  const t = state.tariff || {};
+  const rate = kind === "export" ? t.export_per_kwh : t.import_per_kwh;
+  return `${t.blended ? "\u2300 " : ""}${money(rate)}`;
 }
 
 // How much of the period the clamp meter actually covers. Before it was
@@ -1010,8 +1020,11 @@ async function load() {
   document.getElementById("footerNote").textContent =
     "kWh are integrated from one power sample per poll interval, not read from a meter. " +
     "Gaps longer than 5 minutes count as 5 minutes, so a service outage cannot invent energy. " +
-    `Prices in brackets use ${money(state.tariff.import_per_kwh)}/kWh for consumption and ` +
-    `${money(state.tariff.export_per_kwh)}/kWh for export, both set in the .env file.`;
+    `Prices in brackets use ${tariffLabel("import")}/kWh for consumption and ` +
+    `${tariffLabel("export")}/kWh for export` +
+    (state.tariff && state.tariff.blended
+      ? `, averaged over a period that crossed a tariff change - each bucket was priced at the rate in force then.`
+      : `, both set in the .env file.`);
 }
 
 document.getElementById("periodRow").addEventListener("click", (event) => {

@@ -156,11 +156,98 @@ async def wallbox_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "wallbox.html")
 
 
-def _tariff() -> dict:
+def _rate_at(day: date) -> tuple[float, float]:
+    """The (import, export) tariff in force on a given day.
+
+    Falls back to PRICE_* for any date before the first TARIFFS entry, so
+    an installation with no price history still prices its energy.
+    """
+    rate = (settings.price_import_chf_per_kwh, settings.price_export_chf_per_kwh)
+    for when, imp, exp in settings.tariffs:
+        if date.fromisoformat(when) <= day:
+            rate = (imp, exp)
+        else:
+            break
+    return rate
+
+
+def _bucket_day(bucket: str) -> date:
+    """The day an aggregation bucket falls on.
+
+    Buckets are hours, days or months depending on the period; a month
+    becomes its first day, which is where tariff changes land anyway.
+    """
+    parts = bucket.split("T")[0].split("-")
+    while len(parts) < 3:
+        parts.append("01")
+    return date(int(parts[0]), int(parts[1]), int(parts[2]))
+
+
+def _priced(buckets: list[dict]) -> dict:
+    """Money for a set of buckets, each priced at its own tariff.
+
+    Also returns the hours-weighted average rates for the span, which is
+    what a page needs when it wants to print one price next to a figure
+    that was earned under several.
+    """
+    out = {
+        "spent": 0.0,
+        "earned": 0.0,
+        "avoided": 0.0,
+        "consumption_value": 0.0,
+        "self_consumed_kwh": 0.0,
+        "pv_self_chf": 0.0,
+        "pv_export_chf": 0.0,
+        "heatpump_chf": 0.0,
+    }
+    w_imp = w_exp = weight = 0.0
+    seen: set[tuple[float, float]] = set()
+    for row in buckets:
+        imp, exp = _rate_at(_bucket_day(row["bucket"]))
+        seen.add((imp, exp))
+        own = max(0.0, (row["consumption"] or 0.0) - (row["grid_import"] or 0.0))
+        out["spent"] += (row["grid_import"] or 0.0) * imp
+        out["earned"] += (row["grid_export"] or 0.0) * exp
+        out["avoided"] += own * imp
+        out["consumption_value"] += (row["consumption"] or 0.0) * imp
+        out["self_consumed_kwh"] += own
+        out["pv_self_chf"] += own * imp
+        out["pv_export_chf"] += (row["grid_export"] or 0.0) * exp
+        out["heatpump_chf"] += (row["heatpump"] or 0.0) * imp
+        hours = row["hours"] or 0.0
+        w_imp += imp * hours
+        w_exp += exp * hours
+        weight += hours
+    fallback = _rate_at(date.today())
+    out["import_per_kwh"] = round(w_imp / weight, 4) if weight > 0 else fallback[0]
+    out["export_per_kwh"] = round(w_exp / weight, 4) if weight > 0 else fallback[1]
+    out["blended"] = len(seen) > 1
+    return out
+
+
+def _tariff(priced: dict | None = None) -> dict:
+    """Today's tariff, or the average over a span that crossed a change."""
+    if priced is not None:
+        return {
+            "currency": "CHF",
+            "import_per_kwh": priced["import_per_kwh"],
+            "export_per_kwh": priced["export_per_kwh"],
+            "blended": priced["blended"],
+            "history": [
+                {"from": when, "import_per_kwh": imp, "export_per_kwh": exp}
+                for when, imp, exp in settings.tariffs
+            ],
+        }
+    imp, exp = _rate_at(date.today())
     return {
         "currency": "CHF",
-        "import_per_kwh": settings.price_import_chf_per_kwh,
-        "export_per_kwh": settings.price_export_chf_per_kwh,
+        "import_per_kwh": imp,
+        "export_per_kwh": exp,
+        "blended": False,
+        "history": [
+            {"from": when, "import_per_kwh": i, "export_per_kwh": e}
+            for when, i, e in settings.tariffs
+        ],
     }
 
 
@@ -269,34 +356,38 @@ async def energy(period: str = Query("today")) -> dict:
     # Money is derived here rather than in the store: prices are
     # configuration, the store only knows what was measured.
     totals = payload["totals"]
-    buy = settings.price_import_chf_per_kwh
-    sell = settings.price_export_chf_per_kwh
+    # Priced bucket by bucket, each at the tariff that was in force then.
     # Solar that never reached the grid is valued at the import price,
     # because that is exactly the purchase it replaced.
-    self_consumed = max(0.0, totals["consumption"] - totals["grid_import"])
-    payload["tariff"] = _tariff()
+    priced = _priced(payload["buckets"])
+    payload["tariff"] = _tariff(priced)
     # Which MPPT input faces which way is in no register - it was read off
     # the daily curve and lives in the .env file (see README). The page needs
     # the names to label the two sides it already has the kWh for.
     payload["pv_string_names"] = list(settings.pv_string_names)
     payload["oil"] = _oil_equivalent()
     payload["costs"] = {
-        "spent": round(totals["grid_import"] * buy, 2),
-        "earned": round(totals["grid_export"] * sell, 2),
-        "avoided": round(self_consumed * buy, 2),
-        "saved": round(self_consumed * buy + totals["grid_export"] * sell, 2),
-        "consumption_value": round(totals["consumption"] * buy, 2),
-        "self_consumed_kwh": round(self_consumed, 3),
+        "spent": round(priced["spent"], 2),
+        "earned": round(priced["earned"], 2),
+        "avoided": round(priced["avoided"], 2),
+        "saved": round(priced["avoided"] + priced["earned"], 2),
+        "consumption_value": round(priced["consumption_value"], 2),
+        "self_consumed_kwh": round(priced["self_consumed_kwh"], 3),
     }
 
     # Losses are priced at the import tariff, not the export tariff: with
     # this installation exporting 0.6% of its production, a kWh that was lost
     # or held back is a kWh that had to be bought instead, not one that failed
     # to be sold.
+    #
+    # At the span's average import price: the loss figures are totals over
+    # the whole period and are not broken down per bucket, so there is no
+    # per-bucket tariff to apply to them.
     losses = payload["losses"]
-    losses["real_chf"] = round(losses["real_kwh"] * buy, 2)
-    losses["curtailed_chf"] = round(losses["curtailed_kwh"] * buy, 2)
-    losses["headroom_chf"] = round(losses["curtailed_split"]["headroom"] * buy, 2)
+    avg_buy = priced["import_per_kwh"]
+    losses["real_chf"] = round(losses["real_kwh"] * avg_buy, 2)
+    losses["curtailed_chf"] = round(losses["curtailed_kwh"] * avg_buy, 2)
+    losses["headroom_chf"] = round(losses["curtailed_split"]["headroom"] * avg_buy, 2)
     return payload
 
 
@@ -312,9 +403,14 @@ async def finance() -> dict:
     estimate wearing a calendar's clothes.
     """
     assert store is not None
-    totals = store.energy_buckets("all")["totals"]
-    buy = settings.price_import_chf_per_kwh
-    sell = settings.price_export_chf_per_kwh
+    energy = store.energy_buckets("all")
+    totals = energy["totals"]
+    # Every month at its own tariff: this counter runs for years and will
+    # cross several price changes, and re-pricing history at today's rate
+    # would move money that was already earned.
+    priced = _priced(energy["buckets"])
+    buy = priced["import_per_kwh"]
+    sell = priced["export_per_kwh"]
     oil = _oil_equivalent()
 
     tax_benefit = settings.tax_deduction_chf * settings.tax_deduction_rate
@@ -333,22 +429,26 @@ async def finance() -> dict:
     # solar stream prices the kWh the roof supplied whichever load took
     # them, so crediting the pump with free power as well would count the
     # same francs twice.
-    heating_chf = hp_kwh * oil["litres_per_kwh"] * oil["price_chf_per_litre"] - hp_kwh * buy
+    heating_chf = (
+        hp_kwh * oil["litres_per_kwh"] * oil["price_chf_per_litre"] - priced["heatpump_chf"]
+    )
 
     streams = [
         {
             "key": "pv_self",
             "name": "Solar used in the house",
-            "chf": round(self_consumed * buy, 2),
+            "chf": round(priced["pv_self_chf"], 2),
             "days": round(days, 2),
-            "basis": "%.1f kWh not bought, at %.2f/kWh" % (self_consumed, buy),
+            "basis": "%.1f kWh not bought, at %s%.4f/kWh"
+            % (self_consumed, "avg " if priced["blended"] else "", buy),
         },
         {
             "key": "pv_export",
             "name": "Solar exported",
-            "chf": round((totals["grid_export"] or 0.0) * sell, 2),
+            "chf": round(priced["pv_export_chf"], 2),
             "days": round(days, 2),
-            "basis": "%.1f kWh at %.2f/kWh" % (totals["grid_export"] or 0.0, sell),
+            "basis": "%.1f kWh at %s%.4f/kWh"
+            % (totals["grid_export"] or 0.0, "avg " if priced["blended"] else "", sell),
         },
         {
             "key": "heating",
@@ -405,6 +505,7 @@ async def finance() -> dict:
             "tax_benefit": round(tax_benefit, 2),
             "net": round(net, 2),
         },
+        "tariff": _tariff(priced),
         "measured": {
             "first_record": store.first_timestamp(),
             "earning_since": settings.investment_date or None,

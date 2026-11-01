@@ -834,6 +834,30 @@ it at a third of the price - so the money holds up considerably better than
 the production does, and a single blended number would have hidden both
 facts.
 
+### 16. One price is not a price
+
+Electricity tariffs change on a calendar, usually at new year. A counter
+that runs for a decade and prices its whole history at today's rate is
+wrong in a particular way: every time the utility publishes a new sheet,
+savings that were already earned move. So `TARIFFS` is a history rather
+than a number - a date the rate takes effect from, an import price, an
+export price - and energy is priced bucket by bucket at the rate that was
+in force then. `PRICE_IMPORT_CHF_PER_KWH` and `PRICE_EXPORT_CHF_PER_KWH`
+remain as the fallback for dates before the first entry.
+
+Two consequences show up on the pages. A period that crosses a change has
+no single price, so where one is printed it is the hours-weighted average
+and is marked with a diameter sign; the figures above it were each priced
+at their own rate, and a bare number would claim otherwise. And the loss
+figures are priced at that average, because they are totals over the whole
+period and are not broken down per bucket - the one place here where the
+tariff is applied to a sum rather than to a span.
+
+This is also why the quote's tariffs live in `BENCHMARK_*` and not in
+`TARIFFS`. They are not a price this household ever paid; they are an
+assumption inside someone else's model, and the benchmark needs them to
+reproduce the figure that model printed.
+
 ## Setup
 
 ```
