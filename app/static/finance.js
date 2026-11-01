@@ -111,8 +111,11 @@ function finRenderBars() {
   // their own labels instead of by three hues.
   if (finance.benchmark) {
     bars.push({
-      name: "The quote promised by now",
-      value: finance.benchmark.expected_chf_to_date,
+      // Priced at this household's tariffs, because the bar below it is:
+      // two bars in two different currencies-per-kWh would be a race on
+      // different tracks.
+      name: "The quote's plan, at my tariffs",
+      value: finance.benchmark.expected_chf_to_date_at_my_tariffs,
       fill: "none",
       stroke: cssVar("--text-muted"),
       dash: "5 3",
@@ -171,14 +174,16 @@ function finRenderBenchmark() {
   const m = finance.measured;
   const parts = [
     `Against the ${finEscape(b.label)}, over the ${fmt(m.recorded_days, 0)} recorded days:`,
-    `<strong>${fmt(finance.returned_chf, 0)} ${finance.currency} saved where it promised ` +
-      `${fmt(b.expected_chf_to_date, 0)}` +
+    `<strong>${fmt(finance.returned_chf, 0)} ${finance.currency} saved where its plan would have ` +
+      `earned ${fmt(b.expected_chf_to_date_at_my_tariffs, 0)} at my tariffs` +
       (b.return_pct === null ? "" : ` (${fmt(b.return_pct, 0)}%)`) +
       `</strong>,`,
     `and ${fmt(m.pv_kwh_per_day, 1)} kWh a day produced where it promised ` +
       `${fmt(b.kwh_per_day, 1)}` +
       (b.production_pct === null ? "" : ` (${fmt(b.production_pct, 0)}%)`) +
       `.`,
+    `Its own figure, at its own ${fmt(b.import_chf_per_kwh, 4)}/kWh, was ` +
+      `${fmt(b.expected_chf_to_date, 0)} ${finance.currency}.`,
   ];
   node.innerHTML = parts.join(" ");
 }
@@ -272,6 +277,11 @@ function finRenderTable() {
         b.export_chf_per_kwh,
         2
       )} export &mdash; the tariffs the promise was made at`,
+    ]);
+    rows.push([
+      "&nbsp;&nbsp;the same plan, my tariffs",
+      `${fmt(b.chf_per_year_at_my_tariffs, 0)} ${finance.currency}/year`,
+      "what the quoted energy plan would earn here &mdash; the figure the counter is measured against",
     ]);
   }
 

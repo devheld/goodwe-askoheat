@@ -164,7 +164,9 @@ def _tariff() -> dict:
     }
 
 
-def _benchmark(recorded_days: float, pv_kwh: float, returned_chf: float) -> dict | None:
+def _benchmark(
+    recorded_days: float, pv_kwh: float, returned_chf: float, buy: float, sell: float
+) -> dict | None:
     """What the quote said the installation would do, measured against it.
 
     The quote is a straight line by construction - a fixed annual return
@@ -172,6 +174,14 @@ def _benchmark(recorded_days: float, pv_kwh: float, returned_chf: float) -> dict
     the days that were actually recorded rather than the days that have
     elapsed, because those differ by a week here and the quote has no
     opinion about a service outage.
+
+    The quoted energy plan is priced twice on purpose. At the quote's own
+    tariffs it reproduces the figure the quote printed, which is what its
+    payback claim rests on. At this household's tariffs it becomes what
+    that same plan would have earned here, and only that version can be
+    set against the measured counter: compared across two different
+    tariffs, the ratio would be measuring the price of electricity rather
+    than the performance of the roof.
     """
     year_kwh = settings.benchmark_kwh_per_year
     if year_kwh <= 0:
@@ -185,10 +195,11 @@ def _benchmark(recorded_days: float, pv_kwh: float, returned_chf: float) -> dict
         self_kwh * settings.benchmark_import_chf_per_kwh
         + export_kwh * settings.benchmark_export_chf_per_kwh
     )
+    chf_year_mine = self_kwh * buy + export_kwh * sell
     kwh_day = year_kwh / 365.0
-    chf_day = chf_year / 365.0
     expected_kwh = kwh_day * recorded_days
-    expected_chf = chf_day * recorded_days
+    expected_chf = chf_year / 365.0 * recorded_days
+    expected_chf_mine = chf_year_mine / 365.0 * recorded_days
 
     when = None
     if settings.investment_date and settings.benchmark_payback_years > 0:
@@ -208,15 +219,22 @@ def _benchmark(recorded_days: float, pv_kwh: float, returned_chf: float) -> dict
         "import_chf_per_kwh": settings.benchmark_import_chf_per_kwh,
         "export_chf_per_kwh": settings.benchmark_export_chf_per_kwh,
         "chf_per_year": round(chf_year, 2),
-        "chf_per_day": round(chf_day, 2),
+        "chf_per_year_at_my_tariffs": round(chf_year_mine, 2),
+        "chf_per_day": round(chf_year / 365.0, 2),
         "kwh_per_day": round(kwh_day, 2),
         "net_chf": round(settings.benchmark_net_chf, 2),
         "payback_years": settings.benchmark_payback_years,
         "break_even_date": when.isoformat() if when else None,
         "expected_kwh_to_date": round(expected_kwh, 1),
         "expected_chf_to_date": round(expected_chf, 2),
+        "expected_chf_to_date_at_my_tariffs": round(expected_chf_mine, 2),
         "production_pct": round(100.0 * pv_kwh / expected_kwh, 1) if expected_kwh > 0 else None,
-        "return_pct": round(100.0 * returned_chf / expected_chf, 1) if expected_chf > 0 else None,
+        # Against the plan priced at this household's tariffs, so the ratio
+        # is about the roof and the share kept in the house - not about the
+        # 15% the two tariff sheets happen to differ by.
+        "return_pct": (
+            round(100.0 * returned_chf / expected_chf_mine, 1) if expected_chf_mine > 0 else None
+        ),
     }
 
 
@@ -395,7 +413,7 @@ async def finance() -> dict:
             "pv_kwh": round(totals["pv"] or 0.0, 1),
             "pv_kwh_per_day": round((totals["pv"] or 0.0) / days, 2) if days > 0 else None,
         },
-        "benchmark": _benchmark(days, totals["pv"] or 0.0, returned),
+        "benchmark": _benchmark(days, totals["pv"] or 0.0, returned, buy, sell),
         "streams": streams,
         "returned_chf": returned,
         "remaining_chf": remaining,
