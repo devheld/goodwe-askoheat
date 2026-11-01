@@ -54,6 +54,15 @@ async def lifespan(app: FastAPI):
         # has a clamp behind it: there the charger does not have to be
         # inferred from anything, only told apart from its own standby.
         wallbox_meter_busy_kw=settings.wallbox_meter_busy_kw,
+        # And for the heat pump: what counts as its compressor running, and
+        # the hours it is meant to run in. Neither can be enforced from
+        # here - see heatpump_runs - they only decide what the record is
+        # compared against.
+        heatpump_run_kw=settings.heatpump_run_kw,
+        heatpump_window=(
+            settings.heatpump_window_from_h,
+            settings.heatpump_window_to_h,
+        ),
     )
     reader = GoodWeModbusReader(
         settings.goodwe_host,
@@ -192,6 +201,26 @@ async def energy(period: str = Query("today")) -> dict:
     losses["curtailed_chf"] = round(losses["curtailed_kwh"] * buy, 2)
     losses["headroom_chf"] = round(losses["curtailed_split"]["headroom"] * buy, 2)
     return payload
+
+
+@app.get("/api/heatpump/runs")
+async def heatpump_runs(days: int = Query(7, ge=1, le=366)) -> dict:
+    """Compressor runs against the window the pump is meant to heat in.
+
+    The pump cannot be read or steered from here - its OCI670 gateway
+    speaks no Modbus at all - so the clamp meter on its feed is the only
+    witness to what its controller decided. This is that record, run by run.
+    """
+    assert store is not None
+    # Whole local days, so a seven-day view is seven calendar rows rather
+    # than six and two halves.
+    midnight = (
+        datetime.now(timezone.utc)
+        .astimezone()
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+    )
+    since = (midnight - timedelta(days=days - 1)).astimezone(timezone.utc)
+    return {"days": days, "since": since.isoformat(), **store.heatpump_runs(since.isoformat())}
 
 
 @app.get("/api/wallbox/sessions")

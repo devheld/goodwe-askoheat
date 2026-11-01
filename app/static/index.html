@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Home Energy Manager</title>
-<link rel="stylesheet" href="/static/base.css?v=7" />
+<link rel="stylesheet" href="/static/base.css?v=8" />
 <link rel="stylesheet" href="/static/nav.css?v=1" />
 <style>
   /* Only what this page alone needs. Everything else is in base.css. */
@@ -95,6 +95,18 @@
     <div id="heatpumpChartWrap"></div>
   </div>
 
+  <div class="chart-card" id="heatpumpRunsCard" hidden>
+    <h2>Compressor Runs</h2>
+    <p class="zoom-hint" id="heatpumpRunsNote"></p>
+    <p class="chart-verdict" id="heatpumpRunsVerdict"></p>
+    <div class="legend" id="heatpumpRunsLegend"></div>
+    <div id="heatpumpRunsWrap"></div>
+    <details class="table-view">
+      <summary>Table view</summary>
+      <div id="heatpumpRunsTable"></div>
+    </details>
+  </div>
+
   <div class="chart-card">
     <h2>Battery Charge Level</h2>
     <div id="socChartWrap"></div>
@@ -104,5 +116,6 @@
 </main>
 <script src="/static/nav.js?v=2"></script>
 <script src="/static/app.js?v=25"></script>
+<script src="/static/heatpump.js?v=1"></script>
 </body>
 </html>

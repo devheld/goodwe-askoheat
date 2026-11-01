@@ -147,6 +147,8 @@ class HistoryStore:
         wallbox_busy_load_kw: float = 3.0,
         wallbox_idle_ticks: int = 5,
         wallbox_meter_busy_kw: float = 0.1,
+        heatpump_run_kw: float = 0.5,
+        heatpump_window: tuple[int, int] = (8, 18),
     ) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
@@ -164,6 +166,12 @@ class HistoryStore:
         # where none of that inference is needed: there a charge only has to
         # be told apart from the charger's own standby.
         self._wallbox_meter_busy_kw = wallbox_meter_busy_kw
+        # What counts as the heat pump's compressor running, and the hours
+        # it is supposed to run in. The window is not a control - nothing
+        # can switch this machine - it is only what the runs are compared
+        # against. See heatpump_runs.
+        self._heatpump_run_kw = heatpump_run_kw
+        self._heatpump_window = heatpump_window
         self._battery_full_soc_pct = battery_full_soc_pct
         self._heating_start_max_temp_c = heating_start_max_temp_c
         self._step_max = step_max
@@ -1069,6 +1077,120 @@ class HistoryStore:
             "standby_samples": len(standby),
             "meter_counter": span(meter_counter),
             "charger_counter": span(charger_counter),
+        }
+
+    def heatpump_runs(self, since_iso: str, gap_minutes: int = 10) -> dict:
+        """Compressor runs of the heat pump, from the clamp meter on its feed.
+
+        A run is a maximal series of samples at or above the compressor
+        threshold. A break longer than gap_minutes starts a new one, so a
+        service restart in the middle of a run does not join two of them
+        into one that covers the outage.
+
+        Both ends are known to within one poll interval - the compressor
+        started somewhere between the last quiet sample and the first loud
+        one - which is 70 seconds against runs that last an hour.
+
+        Energy is power times the interval since the previous sample, capped
+        per sample like every other energy figure here, rather than the
+        clamp's own counter. The counter is the better integral, but it
+        restarts with the device, and a run that straddled a restart would
+        read as the entire lifetime of the meter.
+
+        Hours are local, because the window the pump is meant to heat in is
+        a wall clock and so is the night somebody sleeps through.
+        """
+        from_h, to_h = self._heatpump_window
+        sql = """
+            SELECT timestamp, heatpump_kw,
+                   (julianday(timestamp)
+                       - julianday(LAG(timestamp) OVER (ORDER BY timestamp)))
+                       * 24.0 AS raw_h
+            FROM readings
+            WHERE timestamp >= ? AND heatpump_kw IS NOT NULL
+            ORDER BY timestamp
+        """
+        with self._connect() as conn:
+            rows = [dict(r) for r in conn.execute(sql, (since_iso,))]
+
+        runs: list[dict] = []
+        current: dict | None = None
+        previous_ts: datetime | None = None
+        gap = timedelta(minutes=gap_minutes)
+        measured_h = 0.0
+        standby_kwh = 0.0
+
+        for row in rows:
+            ts = datetime.fromisoformat(row["timestamp"])
+            hours = min(row["raw_h"] or 0.0, MAX_SAMPLE_SPAN_H)
+            kw = row["heatpump_kw"]
+            kwh = kw * hours
+            measured_h += hours
+            # Local hour, because that is what the time program is set in.
+            local = ts.astimezone()
+            inside = from_h <= local.hour < to_h
+
+            if kw < self._heatpump_run_kw:
+                # Everything the machine draws while not compressing: the
+                # controller around the clock plus a circulation pump at the
+                # edges of a run. Reported once, as the floor the runs sit
+                # on, rather than as runs of its own.
+                standby_kwh += kwh
+                current = None
+                previous_ts = ts
+                continue
+
+            if current is None or previous_ts is None or ts - previous_ts > gap:
+                current = {
+                    "start": row["timestamp"],
+                    "end": row["timestamp"],
+                    "kwh": 0.0,
+                    "kwh_outside": 0.0,
+                    "peak_kw": kw,
+                    "sum_kw": 0.0,
+                    "samples": 0,
+                    "inside": True,
+                }
+                runs.append(current)
+            current["end"] = row["timestamp"]
+            current["kwh"] += kwh
+            current["sum_kw"] += kw
+            current["peak_kw"] = max(current["peak_kw"], kw)
+            current["samples"] += 1
+            if not inside:
+                # Classified per sample, not per run: a run that starts at
+                # 07:30 and ends at 08:30 is half a breach, and rounding it
+                # to either whole answer would be a worse number than the
+                # one the samples already carry.
+                current["kwh_outside"] += kwh
+                current["inside"] = False
+            previous_ts = ts
+
+        for run in runs:
+            start = datetime.fromisoformat(run["start"])
+            end = datetime.fromisoformat(run["end"])
+            run["minutes"] = round((end - start).total_seconds() / 60.0, 1)
+            run["mean_kw"] = round(run.pop("sum_kw") / run["samples"], 3)
+            run["kwh"] = round(run["kwh"], 3)
+            run["kwh_outside"] = round(run["kwh_outside"], 3)
+            run["peak_kw"] = round(run["peak_kw"], 3)
+
+        runs.reverse()
+        return {
+            "window": {"from_h": from_h, "to_h": to_h},
+            "threshold_kw": self._heatpump_run_kw,
+            "runs": runs,
+            "totals": {
+                "runs": len(runs),
+                "kwh": round(sum(r["kwh"] for r in runs), 3),
+                "kwh_outside": round(sum(r["kwh_outside"] for r in runs), 3),
+                "minutes": round(sum(r["minutes"] for r in runs), 1),
+                # The standing load of the controller, which is the one
+                # number here that nobody chose: it runs whether the house
+                # wants heat or not.
+                "standby_kwh": round(standby_kwh, 3),
+                "measured_hours": round(measured_h, 2),
+            },
         }
 
     def wallbox_sessions(self, since_iso: str, gap_minutes: int = 15) -> list[dict]:

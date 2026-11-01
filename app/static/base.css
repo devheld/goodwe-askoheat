@@ -376,3 +376,12 @@ details.table-view summary {
 
 .chart-note { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; }
 
+/* The one-line verdict under a chart's explanation - the sentence somebody
+   reads at breakfast. It carries the card's own text color rather than the
+   hint's muted gray, because it is the answer and the hint is the method. */
+.chart-verdict {
+  font-size: 13px;
+  color: var(--text-primary);
+  margin: 0 0 12px;
+}
+

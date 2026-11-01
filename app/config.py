@@ -80,6 +80,24 @@ class Settings:
     # ceiling pushes the axis up rather than disappearing.
     heatpump_max_kw: float
 
+    # The hours the pump is meant to heat in, on the local clock, and what
+    # counts as its compressor running.
+    #
+    # Neither is a control. Nothing here can switch this machine: its
+    # gateway speaks no Modbus and the controller has no other interface.
+    # The window is the line the record gets measured against, so "it ran at
+    # three in the morning" becomes a row with a timestamp instead of
+    # something somebody heard.
+    #
+    # 0.5 kW sits in the gap between the three states the clamp actually
+    # sees on this machine: the controller alone draws 0.035 kW, a
+    # circulation pump on its own 0.13-0.14 kW, and the compressor
+    # 1.10-1.21 kW. So it separates "heating" from "idling" and from
+    # "circulating", which is the distinction the runs are about.
+    heatpump_window_from_h: int
+    heatpump_window_to_h: int
+    heatpump_run_kw: float
+
     # One label per connected MPPT input, in order. How many entries there
     # are is how many inputs the dashboard shows, because how many are
     # wired up is a fact about the roof and not something to infer from a
@@ -227,6 +245,9 @@ def load_settings() -> Settings:
         # heater decision behind it.
         shelly_timeout_s=float(os.environ.get("SHELLY_TIMEOUT_S", "3")),
         heatpump_max_kw=float(os.environ.get("HEATPUMP_MAX_KW", "0")),
+        heatpump_window_from_h=int(os.environ.get("HEATPUMP_WINDOW_FROM_H", "8")),
+        heatpump_window_to_h=int(os.environ.get("HEATPUMP_WINDOW_TO_H", "18")),
+        heatpump_run_kw=float(os.environ.get("HEATPUMP_RUN_KW", "0.5")),
         pv_string_names=_pv_string_names(),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),
