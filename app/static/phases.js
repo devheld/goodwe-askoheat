@@ -141,10 +141,18 @@ function phRenderBars() {
   svg += `<line x1="${warnX}" y1="0" x2="${warnX}" y2="${
     phases.phases.length * PH_ROW_H
   }" stroke="${cssVar("--baseline")}" stroke-width="1" stroke-dasharray="3 3" />`;
-  svg += `<text x="${warnX}" y="${phases.phases.length * PH_ROW_H + 12}" font-size="10" ` +
+  const axisY = phases.phases.length * PH_ROW_H + 12;
+  svg += `<text x="${warnX}" y="${axisY}" font-size="10" ` +
     `text-anchor="middle" fill="${muted}">${fmt(phases.warn_pct, 0)}%</text>`;
-  svg += `<text x="${padL + plot}" y="${phases.phases.length * PH_ROW_H + 12}" font-size="10" ` +
-    `text-anchor="end" fill="${muted}">${fmt(phases.fuse_a, 0)} A fuse</text>`;
+  // The rating at the end of the axis, but only where it clears the
+  // threshold label. At phone width those two run into each other, and the
+  // rating is already in the verdict line and the legend - the threshold's
+  // position is not stated anywhere else, so that one stays.
+  const fuseLabel = `${fmt(phases.fuse_a, 0)} A fuse`;
+  if (padL + plot - fuseLabel.length * 5.6 > warnX + 14) {
+    svg += `<text x="${padL + plot}" y="${axisY}" font-size="10" ` +
+      `text-anchor="end" fill="${muted}">${fuseLabel}</text>`;
+  }
 
   wrap.innerHTML = `
     <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img"
