@@ -738,6 +738,61 @@ energy and not a second thing. On the front page it is appended to the
 nightly verdict, where the point is not the total but the comparison: a
 night of unwanted heating reads differently once it is a number of litres.
 
+### 14. Has it paid for itself yet
+
+The `Finanzen` card on the front page is two bars on one scale: what the
+installation cost after everything that came back, and what it has saved
+since the recording started. The distance between the ends of those two
+bars is the whole answer, which is why it is drawn rather than reduced to a
+percentage, and the day the lower bar passes the upper one is the day the
+thing is paid off. After that the same counter keeps going as profit.
+
+The cost side is four figures and one piece of arithmetic that is easy to
+get wrong:
+
+| | |
+|---|---|
+| `INVESTMENT_CHF` | the invoice total, gross |
+| `SUBSIDY_CHF` | the grant actually paid out |
+| `TAX_DEDUCTION_CHF` | the amount that may be deducted |
+| `TAX_DEDUCTION_RATE` | the share of that which became money |
+
+A deduction is not a payment. Subtracting the deductible amount in full
+treats a franc of deduction as a franc in hand, and it is worth the
+marginal tax rate - a quarter to a third of that in most Swiss communes.
+The rate therefore defaults to 1.0, which takes the figure at face value as
+entered, and lowering it to the real marginal rate is the single change
+that moves the break-even date most. **None of these amounts are in this
+repository.** They live in `.env`, which is not in git; `.env.example`
+carries zeros and this explanation.
+
+The return side is measured savings only, in three streams, each divided by
+the hours it was actually recorded over rather than by the calendar:
+
+- **Solar used in the house** - the purchase it replaced, at the import
+  tariff.
+- **Solar exported** - at the (much lower) export tariff.
+- **Heating instead of oil** - the oil the heat pump did not burn, minus
+  the electricity it did use. The electricity is subtracted here and
+  nowhere else: the solar stream already prices the kWh the roof supplied
+  whichever load took them, so crediting the pump with free power as well
+  would count the same francs twice.
+
+Per-stream day counts matter more than they look. The clamp on the heat
+pump went in eleven weeks after the record starts, so its savings cover a
+few days while the solar streams cover months. Dividing everything by one
+span would report a daily rate the machine never ran at. `FINANCE_RETURN_STREAMS`
+decides which streams count at all, because whether heating belongs in this
+sum is a fact about the invoice: if the heat pump was bought separately, its
+savings are paying off something else.
+
+What the card does **not** do is annualise. Eleven weeks of late-summer sun
+is not a year, and the error runs both ways - no sun in January, no heating
+saved in July. So the break-even line prints the rate and the number of
+recorded days behind it, and says in as many words that a winter and a
+summer will both move it. A projection that hides its own basis is a
+promise rather than an estimate.
+
 ## Setup
 
 ```
@@ -943,6 +998,10 @@ sides stand in for a total they do not add up to.
 - The heater is regulated one step per poll, so it takes a few minutes to
   work its way up to the right step after a change in conditions. That is
   deliberate - the steps switch mechanical relays in the AskoHeat.
+- The break-even forecast is a straight-line projection of a daily rate
+  measured over a few months, and it inherits every assumption behind the
+  oil conversion below. It is an order of magnitude, not a date to plan
+  around, until there is a full year in the database.
 - The litres of oil beside the heat pump's kWh are an estimate, not a
   measurement: nothing in this installation measures heat, only the
   electricity going into the pump. The seasonal performance factor is a

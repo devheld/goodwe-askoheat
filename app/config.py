@@ -12,6 +12,18 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _finance_return_streams() -> tuple[str, ...]:
+    """Which measured savings are allowed to pay off the investment.
+
+    A list rather than a flag because the answer is a fact about the
+    invoice, not a preference: if the heat pump was bought separately, its
+    savings belong to a different sum.
+    """
+    raw = os.environ.get("FINANCE_RETURN_STREAMS", "pv_self,pv_export,heating")
+    names = tuple(part.strip() for part in raw.split(",") if part.strip())
+    return names or ("pv_self", "pv_export", "heating")
+
+
 @dataclass(frozen=True)
 class Settings:
     goodwe_host: str
@@ -122,6 +134,32 @@ class Settings:
     oil_kwh_per_litre: float
     oil_boiler_efficiency: float
     oil_price_chf_per_litre: float
+
+    # What the installation cost, and what counts as earning it back. These
+    # amounts live in .env and never in the repository: an invoice is the
+    # household's business. .env.example carries zeros and the explanation.
+    #
+    # investment_chf: the invoice total, gross, before anything came back.
+    #   Zero means "not entered yet", and the page says so rather than
+    #   reporting a break-even it cannot know.
+    # subsidy_chf: the grant actually paid out.
+    # tax_deduction_chf / tax_deduction_rate: a deduction is not cash. The
+    #   first is the amount that may be deducted, the second the share of
+    #   it that became money - the marginal tax rate. At 1.0 the deduction
+    #   is taken at face value, which is the optimistic reading of it.
+    # investment_date: when the installation started earning, if that is
+    #   earlier than the first recorded sample. Only the recorded part can
+    #   be counted, but knowing the real date lets the page admit what it
+    #   is missing instead of starting the clock where the database does.
+    # finance_return_streams: which of the measured savings count against
+    #   the investment. Heating-instead-of-oil belongs there only if the
+    #   heat pump was on the same invoice.
+    investment_chf: float
+    subsidy_chf: float
+    tax_deduction_chf: float
+    tax_deduction_rate: float
+    investment_date: str
+    finance_return_streams: tuple[str, ...]
 
     # One label per connected MPPT input, in order. How many entries there
     # are is how many inputs the dashboard shows, because how many are
@@ -277,6 +315,12 @@ def load_settings() -> Settings:
         oil_kwh_per_litre=float(os.environ.get("OIL_KWH_PER_LITRE", "10.0")),
         oil_boiler_efficiency=float(os.environ.get("OIL_BOILER_EFFICIENCY", "0.85")),
         oil_price_chf_per_litre=float(os.environ.get("OIL_PRICE_CHF_PER_LITRE", "1.78")),
+        investment_chf=float(os.environ.get("INVESTMENT_CHF", "0")),
+        subsidy_chf=float(os.environ.get("SUBSIDY_CHF", "0")),
+        tax_deduction_chf=float(os.environ.get("TAX_DEDUCTION_CHF", "0")),
+        tax_deduction_rate=float(os.environ.get("TAX_DEDUCTION_RATE", "1.0")),
+        investment_date=os.environ.get("INVESTMENT_DATE", "").strip(),
+        finance_return_streams=_finance_return_streams(),
         pv_string_names=_pv_string_names(),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),

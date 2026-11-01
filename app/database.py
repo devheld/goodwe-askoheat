@@ -353,6 +353,13 @@ class HistoryStore:
                 ),
             )
 
+    def first_timestamp(self) -> str | None:
+        """The oldest sample there is - the day the record starts, which is
+        not necessarily the day the installation started earning."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT MIN(timestamp) AS t FROM readings").fetchone()
+        return row["t"] if row and row["t"] else None
+
     def history(self, hours: int) -> list[dict]:
         since_iso = datetime.fromtimestamp(
             datetime.now(timezone.utc).timestamp() - hours * 3600, tz=timezone.utc

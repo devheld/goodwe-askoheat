@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from math import ceil
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -223,6 +224,114 @@ async def energy(period: str = Query("today")) -> dict:
     losses["curtailed_chf"] = round(losses["curtailed_kwh"] * buy, 2)
     losses["headroom_chf"] = round(losses["curtailed_split"]["headroom"] * buy, 2)
     return payload
+
+
+@app.get("/api/finance")
+async def finance() -> dict:
+    """Where the installation stands against what it cost.
+
+    The return side is measured savings only - no annualisation, and no
+    extrapolation backwards over the months before the dashboard existed.
+    The single projection is the break-even forecast at the end, and it
+    ships with the rate and the number of days that rate rests on, because
+    a payback date drawn from eleven weeks of late-summer sun is an
+    estimate wearing a calendar's clothes.
+    """
+    assert store is not None
+    totals = store.energy_buckets("all")["totals"]
+    buy = settings.price_import_chf_per_kwh
+    sell = settings.price_export_chf_per_kwh
+    oil = _oil_equivalent()
+
+    tax_benefit = settings.tax_deduction_chf * settings.tax_deduction_rate
+    net = settings.investment_chf - settings.subsidy_chf - tax_benefit
+
+    # Each stream is divided by the hours it was actually recorded over,
+    # not by the calendar. The clamp on the heat pump went in eleven weeks
+    # after the rest of the record started, and dividing its savings by the
+    # whole span would report a daily rate the machine never ran at.
+    days = (totals["hours"] or 0.0) / 24.0
+    hp_days = (totals["heatpump_hours"] or 0.0) / 24.0
+    self_consumed = max(0.0, totals["consumption"] - totals["grid_import"])
+    hp_kwh = totals["heatpump"] or 0.0
+    # Heating's saving is the oil it did not burn, minus the electricity it
+    # did use. That electricity is subtracted here and nowhere else: the
+    # solar stream prices the kWh the roof supplied whichever load took
+    # them, so crediting the pump with free power as well would count the
+    # same francs twice.
+    heating_chf = hp_kwh * oil["litres_per_kwh"] * oil["price_chf_per_litre"] - hp_kwh * buy
+
+    streams = [
+        {
+            "key": "pv_self",
+            "name": "Solar used in the house",
+            "chf": round(self_consumed * buy, 2),
+            "days": round(days, 2),
+            "basis": "%.1f kWh not bought, at %.2f/kWh" % (self_consumed, buy),
+        },
+        {
+            "key": "pv_export",
+            "name": "Solar exported",
+            "chf": round((totals["grid_export"] or 0.0) * sell, 2),
+            "days": round(days, 2),
+            "basis": "%.1f kWh at %.2f/kWh" % (totals["grid_export"] or 0.0, sell),
+        },
+        {
+            "key": "heating",
+            "name": "Heating instead of oil",
+            "chf": round(heating_chf, 2),
+            "days": round(hp_days, 2),
+            "basis": "%.1f kWh of compressor, metered for %d of %d recorded hours"
+            % (hp_kwh, round(totals["heatpump_hours"] or 0.0), round(totals["hours"] or 0.0)),
+        },
+    ]
+    for stream in streams:
+        stream["counted"] = stream["key"] in settings.finance_return_streams
+        stream["chf_per_day"] = (
+            round(stream["chf"] / stream["days"], 2) if stream["days"] > 0 else None
+        )
+
+    counted = [s for s in streams if s["counted"]]
+    returned = round(sum(s["chf"] for s in counted), 2)
+    rate = sum(s["chf"] / s["days"] for s in counted if s["days"] > 0)
+    remaining = round(net - returned, 2)
+
+    # Forecast only when there is an invoice to forecast against and the
+    # thing is actually earning. Without those the honest answer is no
+    # answer rather than a date at infinity.
+    known = settings.investment_chf > 0
+    days_left: int | None = None
+    when: date | None = None
+    if known and remaining > 0 and rate > 0:
+        days_left = ceil(remaining / rate)
+        when = date.today() + timedelta(days=days_left)
+    elif known and remaining <= 0:
+        days_left = 0
+
+    return {
+        "currency": "CHF",
+        "known": known,
+        "investment": {
+            "gross": round(settings.investment_chf, 2),
+            "subsidy": round(settings.subsidy_chf, 2),
+            "tax_deduction": round(settings.tax_deduction_chf, 2),
+            "tax_rate": settings.tax_deduction_rate,
+            "tax_benefit": round(tax_benefit, 2),
+            "net": round(net, 2),
+        },
+        "measured": {
+            "first_record": store.first_timestamp(),
+            "earning_since": settings.investment_date or None,
+            "recorded_days": round(days, 2),
+        },
+        "streams": streams,
+        "returned_chf": returned,
+        "remaining_chf": remaining,
+        "progress_pct": round(100.0 * returned / net, 1) if net > 0 else None,
+        "rate_chf_per_day": round(rate, 2),
+        "days_to_break_even": days_left,
+        "break_even_date": when.isoformat() if when else None,
+    }
 
 
 @app.get("/api/heatpump/runs")

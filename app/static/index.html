@@ -54,6 +54,22 @@
   <section class="tiles" id="tilesRoof" hidden></section>
   <p class="note" id="roofNote" hidden></p>
 
+  <div class="chart-card" id="financeCard" hidden>
+    <h2>Finanzen</h2>
+    <p class="zoom-hint">
+      What the installation cost against what it has saved since the
+      recording started. The savings are measured; the break-even date is
+      the one projection here, and it says what rate it rests on.
+    </p>
+    <p class="chart-verdict" id="financeVerdict"></p>
+    <div id="financeWrap"></div>
+    <p class="chart-note" id="financeForecast"></p>
+    <details class="table-view">
+      <summary>Table view</summary>
+      <div id="financeTable"></div>
+    </details>
+  </div>
+
   <div class="range-row" id="rangeRow">
     <button data-hours="1">1h</button>
     <button data-hours="6">6h</button>
@@ -117,5 +133,6 @@
 <script src="/static/nav.js?v=2"></script>
 <script src="/static/app.js?v=25"></script>
 <script src="/static/heatpump.js?v=4"></script>
+<script src="/static/finance.js?v=1"></script>
 </body>
 </html>
