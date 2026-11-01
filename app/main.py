@@ -4,6 +4,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
+from calendar import monthrange
 from math import ceil
 from pathlib import Path
 
@@ -214,12 +215,15 @@ def _priced(buckets: list[dict]) -> dict:
         "pv_self_chf": 0.0,
         "pv_export_chf": 0.0,
         "heatpump_chf": 0.0,
-        # Day-weights for pricing a flat daily plan over this span: one
-        # for the import side, one for the export side, which is zero for
-        # the days feed-in was not permitted on.
+        # How much of a year this span represents, seasonally weighted:
+        # the share of annual yield its months carry, scaled by how much
+        # of each month was recorded. Plus the same share priced at the
+        # import and export tariffs of the years it falls in, so a quoted
+        # annual energy can be turned into money for exactly this span.
         "plan_days": 0.0,
-        "plan_import_days": 0.0,
-        "plan_export_days": 0.0,
+        "plan_year_share": 0.0,
+        "plan_import_share": 0.0,
+        "plan_export_share": 0.0,
     }
     w_imp = w_exp = weight = 0.0
     seen: set[tuple[float, float]] = set()
@@ -241,10 +245,21 @@ def _priced(buckets: list[dict]) -> dict:
         w_exp += exp * hours
         weight += hours
         day_weight = hours / 24.0
-        allowed = _export_allowed(_bucket_day(row["bucket"]))
+        bucket_day = _bucket_day(row["bucket"])
+        allowed = _export_allowed(bucket_day)
+        # The share of a year's yield this bucket stands for: its month's
+        # share of the annual total, times the fraction of that month the
+        # record covers. A November bucket is worth a lot fewer kWh than
+        # a June one of the same length, and comparing either against a
+        # twelfth of a year would be comparing it against the wrong month.
+        in_month = monthrange(bucket_day.year, bucket_day.month)[1]
+        share = settings.benchmark_monthly_shares[bucket_day.month - 1] * (
+            day_weight / in_month
+        )
         out["plan_days"] += day_weight
-        out["plan_import_days"] += imp * day_weight
-        out["plan_export_days"] += (exp if allowed else 0.0) * day_weight
+        out["plan_year_share"] += share
+        out["plan_import_share"] += imp * share
+        out["plan_export_share"] += (exp if allowed else 0.0) * share
     fallback = _rate_at(date.today())
     out["import_per_kwh"] = round(w_imp / weight, 4) if weight > 0 else fallback[0]
     out["export_per_kwh"] = round(w_exp / weight, 4) if weight > 0 else fallback[1]
@@ -326,14 +341,16 @@ def _benchmark(priced: dict, window: dict, total_days: float) -> dict | None:
     window_days = window["plan_days"] if has_window else 0.0
     pv_kwh = window["pv_kwh"] if has_window else 0.0
     measured_chf = (window["pv_self_chf"] + window["pv_export_chf"]) if has_window else 0.0
-    expected_kwh = kwh_day * window_days
-    expected_chf = chf_year / 365.0 * window_days
-    # The quote's flat daily plan, priced day by day at the tariff of the
-    # year that day fell in.
+    # The quote's annual figures, cut down to this window by season rather
+    # than by calendar length, and the money priced at the tariff of the
+    # year each month fell in.
+    year_share = window["plan_year_share"] if has_window else 0.0
+    expected_kwh = year_kwh * year_share
+    expected_chf = chf_year * year_share
     expected_chf_mine = (
         (
-            self_kwh / 365.0 * window["plan_import_days"]
-            + export_kwh / 365.0 * window["plan_export_days"]
+            self_kwh * window["plan_import_share"]
+            + export_kwh * window["plan_export_share"]
         )
         if has_window
         else 0.0
@@ -366,6 +383,13 @@ def _benchmark(priced: dict, window: dict, total_days: float) -> dict | None:
         "break_even_date": when.isoformat() if when else None,
         "window_from": settings.export_allowed_from or None,
         "window_days": round(window_days, 1),
+        # What fraction of a year's yield the window's months carry. 0.08
+        # over 40 November days says the comparison rests on 8% of a year
+        # and not on 11% of one, which is the whole point of the profile.
+        "window_year_share": round(year_share, 4),
+        "expected_kwh_per_day": (
+            round(expected_kwh / window_days, 2) if window_days > 0 else None
+        ),
         "excluded_days": round(max(0.0, total_days - window_days), 1),
         "min_days": settings.benchmark_min_days,
         "ready": ready,

@@ -814,16 +814,19 @@ compared at the prices it was made at, or the comparison measures the
 tariff rather than the roof. The two sets differ here by about 15%, which
 is larger than most of the effects anyone would want to read off this card.
 
-**The quote's straight line is used as the straight line it is.** Its model
-assumes a fixed annual return from year one, with no seasonality, and
-giving it a seasonality it never had would be inventing a document. That
-could have been a problem - comparing a late-summer slice against an annual
-mean usually flatters the measurement - but weighting the quoted annual
-yield by a Swiss monthly profile over this particular window changes the
-result by about one percentage point, because mid-August to the end of
-October happens to land within two percent of the annual daily mean. When
-the recorded window is January or July that will no longer hold, and the
-honest fix then is a longer window rather than a cleverer model.
+**The quote's annual figures are spread over the window's own months, not
+divided by 365.** The quote's model is a flat annual return from year one,
+and for a while it was tempting to use it as the straight line it is - its
+seasonality is not in the document, and inventing one felt like forging it.
+That reasoning does not survive a short window. A comparison that covers
+November only would be measured against a twelfth of a year's sun when
+November carries about a twenty-eighth of it, and the ratio would read as a
+fault in the roof rather than as winter. So `BENCHMARK_MONTHLY_SHARES`
+distributes the quoted annual kWh across the months before any part of it
+is compared with anything. It is the one assumption in the benchmark that
+does not come from the quote, it is stated on the card, and it matters
+less the longer the window gets: over a full recorded year the shares sum
+to one and the profile drops out of the arithmetic entirely.
 
 The card reports two ratios and not one, because they measure different
 things and only mean something together: francs saved against francs

@@ -13,6 +13,33 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+DEFAULT_MONTHLY_SHARES = (3.0, 5.0, 8.0, 10.5, 12.0, 12.5, 13.0, 11.5, 9.0, 6.5, 3.5, 2.5)
+
+
+def _monthly_shares() -> tuple[float, ...]:
+    """Twelve proportional shares of the annual PV yield, January first.
+
+    Normalised to sum to 1, so any twelve positive numbers will do.
+    Anything else falls back to the default profile with a warning: a
+    malformed list must not silently become a flat year, which is the
+    error the profile exists to prevent.
+    """
+    raw = os.environ.get("BENCHMARK_MONTHLY_SHARES", "").strip()
+    shares = DEFAULT_MONTHLY_SHARES
+    if raw:
+        try:
+            parsed = tuple(float(p) for p in raw.split(","))
+            if len(parsed) != 12 or sum(parsed) <= 0 or min(parsed) < 0:
+                raise ValueError(parsed)
+            shares = parsed
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "BENCHMARK_MONTHLY_SHARES: need 12 non-negative numbers, using default"
+            )
+    total = sum(shares)
+    return tuple(s / total for s in shares)
+
+
 def _tariffs() -> tuple[tuple[int, float, float], ...]:
     """Parse TARIFFS into (year, import, export), oldest first.
 
@@ -295,6 +322,21 @@ class Settings:
     # it.
     benchmark_min_days: float
 
+    # How a year's yield is spread over the months, as twelve shares. The
+    # quote states one annual figure, and a window that is November only
+    # cannot be compared against a twelfth of it: November is dark, and
+    # the ratio would read as a fault in the roof. So the quoted annual
+    # energies are distributed over the months by this profile before any
+    # part of them is compared with anything.
+    #
+    # This is the one assumption in the benchmark that is not from the
+    # quote. It is normalised on load, so the numbers only have to be
+    # proportional; the default is a Swiss Mittelland profile. Replacing
+    # it with figures for the actual roof - PVGIS will give them per
+    # orientation - makes the monthly comparison sharper, and once a full
+    # year is recorded the profile stops mattering at all.
+    benchmark_monthly_shares: tuple[float, ...]
+
     # Usable battery capacity in kWh, needed to tell a round-trip loss from
     # energy that is simply still in the battery. Not readable over Modbus
     # here, so it is configuration: derived for this installation from five
@@ -454,7 +496,8 @@ def load_settings() -> Settings:
         ),
         tariffs=_tariffs(),
         export_allowed_from=os.environ.get("EXPORT_ALLOWED_FROM", "").strip(),
-        benchmark_min_days=float(os.environ.get("BENCHMARK_MIN_DAYS", "14")),
+        benchmark_min_days=float(os.environ.get("BENCHMARK_MIN_DAYS", "30")),
+        benchmark_monthly_shares=_monthly_shares(),
         battery_capacity_kwh=float(os.environ.get("BATTERY_CAPACITY_KWH", "27")),
         db_path=PROJECT_ROOT / os.environ.get("DB_PATH", "data/home-energy.db"),
     )

@@ -200,15 +200,21 @@ function finRenderBenchmark() {
   // money ratio is what the household gets, the production ratio is what
   // the roof does. A battery the quote did not include keeps more in the
   // house than its plan assumed, so the two can come apart.
+  // The quote's expectation is its annual figure spread over the window's
+  // own months, not divided by 365. A window of November against a twelfth
+  // of a year would read as a fault in the roof rather than as winter.
   node.innerHTML =
     prefix +
     ` Against the ${finEscape(b.label)}, over the ${fmt(b.window_days, 0)} days since ` +
-    `${finDate(b.window_from)}: <strong>${fmt(b.measured_chf, 0)} ${finance.currency} earned ` +
-    `where its plan would have earned ${fmt(b.expected_chf_to_date_at_my_tariffs, 0)} at my ` +
-    `tariffs (${fmt(b.return_pct, 0)}%), and ${fmt(b.measured_kwh_per_day, 1)} kWh a day ` +
-    `produced where it promised ${fmt(b.kwh_per_day, 1)} (${fmt(b.production_pct, 0)}%)</strong>. ` +
-    `Its own figure, at its own ${fmt(b.import_chf_per_kwh, 4)}/kWh, was ` +
-    `${fmt(b.expected_chf_to_date, 0)} ${finance.currency}.`;
+    `${finDate(b.window_from)} &mdash; ${fmt(100 * b.window_year_share, 0)}% of a year's sun, ` +
+    `not ${fmt((100 * b.window_days) / 365, 0)}% of its days: ` +
+    `<strong>${fmt(b.measured_chf, 0)} ${finance.currency} earned where its plan would have ` +
+    `earned ${fmt(b.expected_chf_to_date_at_my_tariffs, 0)} at my tariffs ` +
+    `(${fmt(b.return_pct, 0)}%), and ${fmt(b.measured_kwh_per_day, 1)} kWh a day produced ` +
+    `where its yield over these months comes to ${fmt(b.expected_kwh_per_day, 1)} ` +
+    `(${fmt(b.production_pct, 0)}%)</strong>. Its own figure, at its own ` +
+    `${fmt(b.import_chf_per_kwh, 4)}/kWh, was ${fmt(b.expected_chf_to_date, 0)} ` +
+    `${finance.currency}.`;
 }
 
 function finRenderForecast() {
@@ -305,7 +311,7 @@ function finRenderTable() {
       `${fmt(b.self_kwh_per_year, 0)} kWh used in the house, ${fmt(
         b.export_kwh_per_year,
         0
-      )} kWh exported`,
+      )} kWh exported &mdash; spread over the months by a standard seasonal profile, the one assumption here not taken from the quote`,
     ]);
     rows.push([
       "&nbsp;&nbsp;expected return",
