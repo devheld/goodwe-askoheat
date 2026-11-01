@@ -490,6 +490,24 @@ function renderLosses(energy) {
 
 // --- stacked consumption + solar line ----------------------------------------
 
+// What crossed the meter and what came off the roof, drawn over the stack
+// of consumers rather than into it: these are sources and a sink, and
+// stacking them onto consumption would make the top of the column mean
+// nothing. All on the one kWh axis - never a second y scale.
+//
+// Each line carries its own dash, and the legend names it, because hue is
+// doing too much work on this chart already. Four stacked fills hold their
+// separation by only ever touching their neighbours, which is how the
+// stack was validated; a line crosses all four of them, so its identity
+// cannot rest on colour. Dash plus a labelled legend plus the tooltip is
+// what carries it, and the surface-coloured halo underneath is what makes
+// export's green legible where it crosses the wallbox's.
+const SOURCE_LINES = [
+  { key: "pv", name: "Solar (solid line)", color: "--e-solar", dash: null },
+  { key: "grid_import", name: "Grid import (dashed)", color: "--e-import", dash: "6 4" },
+  { key: "grid_export", name: "Grid export (dotted)", color: "--e-export", dash: "2 3" },
+];
+
 function renderStack(energy) {
   const container = document.getElementById("chartStack");
   const buckets = energy.buckets;
@@ -512,10 +530,13 @@ function renderStack(energy) {
     .padding(0.22);
 
   const stackMax = d3.max(buckets, (d) => d3.sum(visible, (c) => d[c.key])) || 0;
-  const pvMax = d3.max(buckets, (d) => d.pv) || 0;
+  // The lines have to fit too, or import in a dark month runs off the top.
+  // Both grid figures arrive as positive sums - import is what was bought,
+  // export what was sold - so there is no sign to flip, only room to make.
+  const lineMax = d3.max(SOURCE_LINES, (s) => d3.max(buckets, (d) => d[s.key] || 0)) || 0;
   const y = d3
     .scaleLinear()
-    .domain([0, Math.max(stackMax, pvMax) * 1.1 || 1])
+    .domain([0, Math.max(stackMax, lineMax) * 1.1 || 1])
     .range([height - padB, padT]);
 
   const decimals = y.domain()[1] < 5 ? 1 : 0;
@@ -553,20 +574,33 @@ function renderStack(energy) {
     }
   }
 
-  // Solar on the same kWh axis - never a second y scale.
-  const line = d3
-    .line()
-    .x((d) => band(d.bucket) + band.bandwidth() / 2)
-    .y((d) => y(d.pv))
-    .curve(d3.curveMonotoneX);
-  svg
-    .append("path")
-    .datum(buckets)
-    .attr("fill", "none")
-    .attr("stroke", cssVar("--e-solar"))
-    .attr("stroke-width", 2)
-    .attr("stroke-linejoin", "round")
-    .attr("d", line);
+  for (const source of SOURCE_LINES) {
+    const line = d3
+      .line()
+      .x((d) => band(d.bucket) + band.bandwidth() / 2)
+      .y((d) => y(d[source.key] || 0))
+      .curve(d3.curveMonotoneX);
+    const path = line(buckets);
+    // Halo first, in the surface colour: a 2px ring is what keeps a line
+    // readable where it crosses a fill of similar lightness.
+    svg
+      .append("path")
+      .attr("fill", "none")
+      .attr("stroke", cssVar("--surface-1"))
+      .attr("stroke-width", 6)
+      .attr("stroke-linejoin", "round")
+      .attr("stroke-opacity", 0.85)
+      .attr("d", path);
+    const drawn = svg
+      .append("path")
+      .attr("fill", "none")
+      .attr("stroke", cssVar(source.color))
+      .attr("stroke-width", 2)
+      .attr("stroke-linejoin", "round")
+      .attr("stroke-linecap", "round")
+      .attr("d", path);
+    if (source.dash) drawn.attr("stroke-dasharray", source.dash);
+  }
 
   drawXLabels(svg, band, buckets, energy.grain, height - padB);
 
@@ -588,8 +622,17 @@ function renderStack(energy) {
         label: c.name,
         value: kwhWithCost(d[c.key]),
       }));
-      rows.push({ color: "--e-solar", label: "Solar", value: `${fmt(d.pv, 2)} kWh` });
       rows.push({ label: "Total used", value: kwhWithCost(d.consumption) });
+      for (const source of SOURCE_LINES) {
+        rows.push({
+          color: source.color,
+          label: source.name.replace(/ \(.*\)$/, ""),
+          value:
+            source.key === "grid_export"
+              ? `${fmt(d[source.key], 2)} kWh (${cost(d[source.key], "export")})`
+              : kwhWithCost(d[source.key]),
+        });
+      }
       showTip(tipRows(bucketLabel(d.bucket, energy.grain, true), rows), event);
     })
     .on("mouseleave", hideTip);
@@ -609,6 +652,8 @@ function renderStackTable(energy) {
         <td>${fmt(d.consumption, 2)}</td>
         <td>${cost(d.consumption)}</td>
         <td>${fmt(d.pv, 2)}</td>
+        <td>${fmt(d.grid_import, 2)}</td>
+        <td>${fmt(d.grid_export, 2)}</td>
       </tr>`
     )
     .join("");
@@ -616,7 +661,7 @@ function renderStackTable(energy) {
     <table class="data">
       <thead><tr>
         <th>Bucket</th><th>Household</th><th>Heat pump</th><th>AskoHeat</th><th>Wallbox</th>
-        <th>Total</th><th>Value</th><th>Solar</th>
+        <th>Total</th><th>Value</th><th>Solar</th><th>Grid import</th><th>Grid export</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -964,13 +1009,18 @@ onViewportResize(() => renderEnergy());
 function renderEnergy() {
   if (!state.energy) return;
   renderKpis(state.energy);
-  // The three stacked consumers can be toggled; solar is the reference line
-  // and stays put, so it is listed but not clickable.
+  // The stacked consumers can be toggled; the source lines are references
+  // and stay put, so they are listed but not clickable. Each names its own
+  // dash, which is what tells them apart where they cross the fills.
   renderLegend("legendStack", CONSUMERS, { toggle: true });
-  const solar = document.createElement("span");
-  solar.className = "item";
-  solar.innerHTML = `<span class="swatch" style="background:${cssVar("--e-solar")}"></span>Solar (line)`;
-  document.getElementById("legendStack").appendChild(solar);
+  const stackLegend = document.getElementById("legendStack");
+  for (const source of SOURCE_LINES) {
+    const item = document.createElement("span");
+    item.className = "item";
+    item.innerHTML =
+      `<span class="swatch" style="background:${cssVar(source.color)}"></span>` + source.name;
+    stackLegend.appendChild(item);
+  }
 
   renderLegend("legendGrid", [
     { key: "grid_import", name: "Grid import", color: "--e-import" },
@@ -984,7 +1034,11 @@ function renderEnergy() {
   const hpCovered = state.energy.totals.heatpump_hours || 0;
   const hpTotal = state.energy.totals.hours || 0;
   stackNote.textContent =
-    "Stacked kWh per bucket, with solar production as a line on the same scale." +
+    "Stacked kWh per bucket. Solar production and the two grid directions " +
+    "are lines on the same scale rather than segments: they are sources and " +
+    "a sink, and stacking them onto consumption would leave the top of the " +
+    "column meaning nothing. Grid import and export are both drawn positive " +
+    "- the magnitude each way." +
     (hpTotal > 0 && hpCovered < hpTotal - 0.05
       ? ` The heat pump has had its own meter for ${fmt(hpCovered)} of these ${fmt(
           hpTotal
