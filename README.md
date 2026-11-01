@@ -924,7 +924,7 @@ But a 3EM does not only report a total. It reports current per phase, and
 that the inverter cannot: its registers 35163/35165/35167 give load per
 phase, which is not what the connection carries. Those three columns were
 being written to the database every minute and read by nothing - and they
-already held a 22.0 A peak on one phase of a 25 A fuse, at 21:37 on a
+already held a 22.0 A peak on one phase of a 25 A fuse, at 22:37 on a
 Wednesday evening, which no page would have shown anybody.
 
 So the fix was not to move the clamps. It was to use the quantity only they
