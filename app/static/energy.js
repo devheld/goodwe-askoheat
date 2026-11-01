@@ -257,6 +257,16 @@ function renderKpis(energy) {
   // is the number they divide up. No money line: which kWh of a side were
   // self-consumed and which were exported is not recorded per input, and
   // prorating the total would be an invented split.
+  // The pump's kWh in the unit the house was heated in before it. It
+  // goes directly after the pump's own tile, because it is the same energy
+  // in an older unit, and it wears the pump's colour for the same reason -
+  // a second hue would claim it is a second thing.
+  const oil = oilEquivalent(energy);
+  if (oil) {
+    const at = tiles.findIndex((t) => t.label === "Heat pump");
+    tiles.splice(at < 0 ? tiles.length : at + 1, 0, oil);
+  }
+
   const roof = roofTotals(energy);
   if (roof.ok) {
     tiles.splice(
@@ -285,6 +295,31 @@ function renderKpis(energy) {
       <div class="sub">${tile.sub}</div>`;
     wrap.appendChild(el);
   }
+}
+
+// The one number in here that was not measured, and it says so. The
+// clamp sees electricity going into the pump; how much heat came out is
+// an assumed seasonal performance factor, and what an oil boiler would
+// have burned for that heat is two more assumptions on top. All three are
+// printed, because a litre figure with the assumptions hidden is a claim
+// rather than a conversion.
+function oilEquivalent(energy) {
+  const o = energy.oil;
+  const kwhEl = energy.totals.heatpump || 0;
+  if (!o || !o.litres_per_kwh || kwhEl <= 0) return null;
+  const litres = kwhEl * o.litres_per_kwh;
+  return {
+    label: "Oil equivalent",
+    value: `${fmt(litres, litres < 10 ? 2 : 1)} l`,
+    money: money(litres * o.price_chf_per_litre),
+    sub:
+      `What an old oil boiler would have burned for the same heat, at ` +
+      `${money(o.price_chf_per_litre)}/l. The pump's ${fmt(kwhEl)} kWh cost ` +
+      `${cost(kwhEl)}. Estimated: SPF ${fmt(o.spf, 1)}, boiler ` +
+      `${fmt(100 * o.boiler_efficiency, 0)}%, ${fmt(o.kwh_per_litre, 0)} kWh/l - ` +
+      `the clamp measures electricity, never heat.`,
+    color: "--e-heatpump",
+  };
 }
 
 // How much of the period the clamp meter actually covers. Before it was

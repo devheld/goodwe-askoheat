@@ -98,6 +98,31 @@ class Settings:
     heatpump_window_to_h: int
     heatpump_run_kw: float
 
+    # The heat pump's electricity expressed in the unit this house used to
+    # be heated in. Nothing here is measured: the clamp meter sees
+    # electricity going in and never heat coming out, so the conversion is
+    # three assumptions, kept in configuration so the page can print them
+    # next to the number and a better figure can replace them without
+    # touching code.
+    #
+    # heatpump_spf: heat delivered per kWh of electricity across a season.
+    #   The datasheet for this machine (CTA Optiheat 1-5es, brine/water)
+    #   gives COP 4.5 at B0/W35, 3.4 at B0/W45 and 2.7 at B0/W55, with
+    #   1.1/1.4/1.7 kW drawn - and the clamp reads 1.10-1.21 kW, which is
+    #   the B0/W35 column. 4.0 is deliberately below that: over a winter
+    #   the brine gets colder and hot water needs a higher flow
+    #   temperature, and a lab SCOP is not a seasonal figure.
+    # oil_kwh_per_litre: the energy in a litre of heating oil, 10 kWh
+    #   (35.9 MJ) by its lower heating value.
+    # oil_boiler_efficiency: how much of that an old non-condensing boiler
+    #   actually put into the house across a year, flue and standby losses
+    #   included. 0.85 is the optimistic end for the oil heating, which is
+    #   the fair direction to err in for a comparison it is going to lose.
+    heatpump_spf: float
+    oil_kwh_per_litre: float
+    oil_boiler_efficiency: float
+    oil_price_chf_per_litre: float
+
     # One label per connected MPPT input, in order. How many entries there
     # are is how many inputs the dashboard shows, because how many are
     # wired up is a fact about the roof and not something to infer from a
@@ -248,6 +273,10 @@ def load_settings() -> Settings:
         heatpump_window_from_h=int(os.environ.get("HEATPUMP_WINDOW_FROM_H", "8")),
         heatpump_window_to_h=int(os.environ.get("HEATPUMP_WINDOW_TO_H", "18")),
         heatpump_run_kw=float(os.environ.get("HEATPUMP_RUN_KW", "0.5")),
+        heatpump_spf=float(os.environ.get("HEATPUMP_SPF", "4.0")),
+        oil_kwh_per_litre=float(os.environ.get("OIL_KWH_PER_LITRE", "10.0")),
+        oil_boiler_efficiency=float(os.environ.get("OIL_BOILER_EFFICIENCY", "0.85")),
+        oil_price_chf_per_litre=float(os.environ.get("OIL_PRICE_CHF_PER_LITRE", "1.78")),
         pv_string_names=_pv_string_names(),
         step_min=int(os.environ.get("STEP_MIN", "0")),
         step_max=int(os.environ.get("STEP_MAX", "7")),

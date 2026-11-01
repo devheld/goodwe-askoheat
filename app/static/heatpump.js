@@ -315,9 +315,16 @@ function hpRenderNote() {
   // sentence, so the state never rests on the color.
   const good = kwh < 0.05;
   const color = cssVar(good ? "--success" : "--status-warning");
+  // The night's kWh in litres of oil as well, because kWh on a heating
+  // bill mean nothing to anyone who heated with oil until last year. The
+  // span is wholly outside the window, so this is the same energy the
+  // sentence just named, not a second figure.
+  const litres = hpRuns.oil && hpRuns.oil.litres_per_kwh
+    ? ` That is the heat an oil boiler would have burned ${fmt(kwh * hpRuns.oil.litres_per_kwh, 2)} l for.`
+    : "";
   const text = good
     ? `${when}, ${span}: nothing ran.`
-    : `${when}, ${span}: ${count} ${count === 1 ? "run" : "runs"}, ${fmt(kwh, 2)} kWh outside the heating window.`;
+    : `${when}, ${span}: ${count} ${count === 1 ? "run" : "runs"}, ${fmt(kwh, 2)} kWh outside the heating window.${litres}`;
   verdict.innerHTML =
     `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:7px;"></span>` +
     hpEscape(text) +

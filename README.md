@@ -702,6 +702,42 @@ falls; a weather-compensated heating circuit does exactly that. The shape
 of the record identified which of two settings was responsible, which is
 the kind of question that otherwise needs a controller one can read.
 
+### 13. kWh are not a unit anyone has a feel for yet
+
+A house that was heated with oil until recently has years of intuition in
+litres and none in kilowatt-hours. "The pump used 10.3 kWh yesterday" is
+unreadable in both directions: nobody knows whether that is a lot, and
+nobody knows how it compares with the tank that used to be refilled every
+spring. So the pump's energy is also shown in litres of heating oil.
+
+The conversion is three assumptions and one measurement, and the dashboard
+prints all four rather than just their product:
+
+| | Value | Where it comes from |
+|---|---|---|
+| Electricity in | measured | the clamp meter on the pump's feed |
+| Heat out per kWh | `HEATPUMP_SPF`, 4.0 | assumed - nothing here measures heat |
+| Energy in a litre of oil | `OIL_KWH_PER_LITRE`, 10 | lower heating value, 35.9 MJ/l |
+| What a boiler did with it | `OIL_BOILER_EFFICIENCY`, 0.85 | annual utilisation of an old non-condensing boiler |
+
+Only the first line is a measurement, and the second is the one that
+matters most, so it is worth saying where 4.0 comes from. The machine's
+datasheet gives COP 4.5 at B0/W35, 3.4 at B0/W45 and 2.7 at B0/W55, drawing
+1.1, 1.4 and 1.7 kW. The clamp reads 1.10-1.21 kW, which is the B0/W35
+column almost exactly - so the machine is currently working at the top of
+its own range, and the instantaneous figure would be around 4.5. Across a
+winter it will not be: the brine gets colder and hot water needs a higher
+flow temperature. 4.0 is a seasonal estimate below the datasheet's best
+point, and the boiler is given the optimistic end of its range, both
+erring in favour of the heating that is being replaced.
+
+The result appears twice, in the two places the question gets asked. On the
+energy page it is a tile beside the pump's own, period-scoped like
+everything else there, carrying the pump's colour because it is the same
+energy and not a second thing. On the front page it is appended to the
+nightly verdict, where the point is not the total but the comparison: a
+night of unwanted heating reads differently once it is a number of litres.
+
 ## Setup
 
 ```
@@ -907,6 +943,11 @@ sides stand in for a total they do not add up to.
 - The heater is regulated one step per poll, so it takes a few minutes to
   work its way up to the right step after a change in conditions. That is
   deliberate - the steps switch mechanical relays in the AskoHeat.
+- The litres of oil beside the heat pump's kWh are an estimate, not a
+  measurement: nothing in this installation measures heat, only the
+  electricity going into the pump. The seasonal performance factor is a
+  setting (`HEATPUMP_SPF`), and until a heat meter or a full winter of data
+  exists it stays one.
 - The heat pump's controller cannot be read or written at all through its
   OCI670 gateway, so everything the dashboard shows about it is inferred
   from a clamp meter on its feed: when the compressor ran and what it drew,

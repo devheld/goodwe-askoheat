@@ -163,6 +163,27 @@ def _tariff() -> dict:
     }
 
 
+def _oil_equivalent() -> dict:
+    """How many litres of heating oil a kWh of the pump's electricity is.
+
+    Derived here rather than in the store for the same reason money is:
+    the store knows what was measured, and this is three assumptions. It
+    travels with every payload that carries the pump's kWh so the page can
+    state the assumptions beside the number instead of implying it was
+    read off something.
+    """
+    usable = settings.oil_kwh_per_litre * settings.oil_boiler_efficiency
+    return {
+        # Heat per kWh of electricity, divided by the heat a litre of oil
+        # actually delivered through an old boiler.
+        "litres_per_kwh": round(settings.heatpump_spf / usable, 4) if usable > 0 else 0.0,
+        "spf": settings.heatpump_spf,
+        "kwh_per_litre": settings.oil_kwh_per_litre,
+        "boiler_efficiency": settings.oil_boiler_efficiency,
+        "price_chf_per_litre": settings.oil_price_chf_per_litre,
+    }
+
+
 @app.get("/api/energy")
 async def energy(period: str = Query("today")) -> dict:
     assert store is not None
@@ -183,6 +204,7 @@ async def energy(period: str = Query("today")) -> dict:
     # the daily curve and lives in the .env file (see README). The page needs
     # the names to label the two sides it already has the kWh for.
     payload["pv_string_names"] = list(settings.pv_string_names)
+    payload["oil"] = _oil_equivalent()
     payload["costs"] = {
         "spent": round(totals["grid_import"] * buy, 2),
         "earned": round(totals["grid_export"] * sell, 2),
@@ -220,7 +242,12 @@ async def heatpump_runs(days: int = Query(7, ge=1, le=366)) -> dict:
         .replace(hour=0, minute=0, second=0, microsecond=0)
     )
     since = (midnight - timedelta(days=days - 1)).astimezone(timezone.utc)
-    return {"days": days, "since": since.isoformat(), **store.heatpump_runs(since.isoformat())}
+    return {
+        "days": days,
+        "since": since.isoformat(),
+        "oil": _oil_equivalent(),
+        **store.heatpump_runs(since.isoformat()),
+    }
 
 
 @app.get("/api/wallbox/sessions")
