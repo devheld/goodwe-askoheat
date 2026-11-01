@@ -264,6 +264,25 @@
     <p class="chart-note" id="curtailNote"></p>
   </div>
 
+  <div class="chart-card" id="financeCard" hidden>
+    <h2>Finance</h2>
+    <p class="zoom-hint">
+      What the installation cost against what it has saved since the
+      recording started. This card ignores the period buttons above - a
+      payback is a running total, not a slice. The savings are measured;
+      the break-even date is the one projection here, and it says what
+      rate it rests on.
+    </p>
+    <p class="chart-verdict" id="financeVerdict"></p>
+    <div id="financeWrap"></div>
+    <p class="chart-note" id="financeBenchmark"></p>
+    <p class="chart-note" id="financeForecast"></p>
+    <details class="table-view">
+      <summary>Table view</summary>
+      <div id="financeTable"></div>
+    </details>
+  </div>
+
   <p class="footer-note" id="footerNote"></p>
 </main>
 <div id="tooltip" role="tooltip" aria-hidden="true"></div>
@@ -271,5 +290,6 @@
 <script src="/static/vendor/d3.v7.min.js"></script>
 <script src="/static/chartkit.js?v=2"></script>
 <script src="/static/energy.js?v=15"></script>
+<script src="/static/finance.js?v=10"></script>
 </body>
 </html>

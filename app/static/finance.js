@@ -17,14 +17,20 @@
 // of recorded days that rate comes from - a payback date drawn from eleven
 // weeks of late-summer sun is an estimate wearing a calendar's clothes.
 //
-// The helpers (el, fmt, cssVar, chartWidth, onViewportResize) come from
-// app.js, which this page loads first.
+// The helpers (fmt, cssVar, money, chartWidth, onViewportResize) come
+// from chartkit.js, which this page loads first. This card lives on the
+// energy page but is deliberately not period-scoped: the period buttons
+// slice the charts above it, and a payback is a running total.
 
 const FIN_BAR_H = 20;
 const FIN_LABEL_H = 17;
 const FIN_GROUP_GAP = 14;
 
 let finance = null;
+
+function finEl(id) {
+  return document.getElementById(id);
+}
 
 function finMoney(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
@@ -51,9 +57,9 @@ function finDate(iso) {
 
 function renderFinance() {
   if (!finance) return;
-  const card = el("financeCard");
+  const card = finEl("financeCard");
   if (!card) return;
-  setHidden(card, false);
+  card.hidden = false;
   finRenderVerdict();
   finRenderBars();
   finRenderBenchmark();
@@ -62,7 +68,7 @@ function renderFinance() {
 }
 
 function finRenderVerdict() {
-  const node = el("financeVerdict");
+  const node = finEl("financeVerdict");
   if (!node) return;
   const muted = cssVar("--text-muted");
   let color = cssVar("--text-muted");
@@ -86,7 +92,7 @@ function finRenderVerdict() {
 }
 
 function finRenderBars() {
-  const wrap = el("financeWrap");
+  const wrap = finEl("financeWrap");
   if (!wrap) return;
 
   // No invoice, no bars. A lone bar would be scaled against itself and
@@ -156,7 +162,7 @@ function finRenderBars() {
 // import tariff instead of exporting half of it at a third of the price,
 // so the money holds up better than the production does.
 function finRenderBenchmark() {
-  const node = el("financeBenchmark");
+  const node = finEl("financeBenchmark");
   if (!node) return;
   const b = finance.benchmark;
   if (!b) {
@@ -218,7 +224,7 @@ function finRenderBenchmark() {
 }
 
 function finRenderForecast() {
-  const node = el("financeForecast");
+  const node = finEl("financeForecast");
   if (!node) return;
   const rate = finance.rate_chf_per_day;
   const days = finance.measured.recorded_days;
@@ -269,7 +275,7 @@ function finRenderForecast() {
 }
 
 function finRenderTable() {
-  const host = el("financeTable");
+  const host = finEl("financeTable");
   if (!host) return;
   const inv = finance.investment;
   const rows = [
@@ -375,7 +381,7 @@ async function fetchFinance() {
     finance = await res.json();
     renderFinance();
   } catch (err) {
-    const wrap = el("financeWrap");
+    const wrap = finEl("financeWrap");
     if (wrap) {
       wrap.innerHTML = `<div class="empty-state">Failed to load the finance figures (${err.message})</div>`;
     }
