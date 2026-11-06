@@ -14,6 +14,182 @@ const SESSION_DAYS = 30;
 // that finished while the page stayed open, not about being live.
 const SESSION_REFRESH_MS = 5 * 60 * 1000;
 
+// Where the charging came from. Three sources that add up to the day's
+// charging, so it is one stacked bar per day and not three lines: the
+// question is composition, and the total is worth reading off the same
+// mark. Horizontal, because the label is a date and a date is wider than
+// a bar is tall, and only days that saw a charge get a row - a 30-day
+// axis with six bars on it would be mostly empty.
+//
+// Blue, amber, magenta are slots 1, 4 and 5 of the project's categorical
+// theme, the same hues the energy page gives the roof, the battery and
+// the grid, so the mapping is learned once. Validated as a stacked
+// adjacent set against both surfaces; the 2px gap between segments is
+// part of that, and the legend plus the table carry the identity that
+// colour alone must not.
+const SOURCE_PARTS = [
+  { key: "pv", name: "Straight off the roof", color: "--series-pv" },
+  { key: "battery", name: "Out of the battery", color: "--series-batt-discharge" },
+  { key: "grid", name: "Bought from the grid", color: "--series-grid" },
+];
+
+function renderSources(src) {
+  const chart = document.getElementById("sourceChart");
+  const verdict = document.getElementById("sourceVerdict");
+  const table = document.getElementById("sourceTable");
+  const legend = document.getElementById("sourceLegend");
+  if (!chart) return;
+  if (!src || !src.kwh) {
+    chart.innerHTML =
+      '<div class="empty-state">No charging recorded yet - this fills up once a car charges.</div>';
+    if (verdict) verdict.textContent = "";
+    if (table) table.innerHTML = "";
+    if (legend) legend.innerHTML = "";
+    return;
+  }
+
+  const pct = (v) => (100 * v) / src.kwh;
+  const own = src.pv_kwh + src.battery_kwh;
+  if (verdict) {
+    verdict.innerHTML =
+      `<strong>${fmt(src.kwh, 1)} kWh into the car</strong>: ` +
+      `${fmt(pct(src.pv_kwh), 0)}% straight off the roof, ` +
+      `${fmt(pct(src.battery_kwh), 0)}% out of the battery, ` +
+      `${fmt(pct(src.grid_kwh), 0)}% bought. ` +
+      `${fmt(own, 1)} kWh never went through a meter.`;
+  }
+  if (legend) renderLegend(legend, SOURCE_PARTS);
+
+  // Newest first, same as the session list below it.
+  const days = (src.by_day || []).filter((d) => d.kwh > 0.05).slice(-20).reverse();
+  const width = chartWidth(chart);
+  const narrow = width < 560;
+  const rowH = 26;
+  const padL = narrow ? 58 : 96;
+  const padR = narrow ? 56 : 92;
+  const padT = 8;
+  chart.innerHTML = "";
+  const svg = newSvg(chart, width, days.length * rowH + 16);
+  const x = d3
+    .scaleLinear()
+    .domain([0, d3.max(days, (d) => d.kwh) * 1.05 || 1])
+    .range([padL, width - padR]);
+  const span = (v) => x(v) - x(0);
+
+  days.forEach((d, i) => {
+    const y = padT + i * rowH;
+    const when = new Date(`${d.day}T12:00:00`);
+    svg
+      .append("text")
+      .attr("x", padL - 10)
+      .attr("y", y + rowH / 2 + 3)
+      .attr("text-anchor", "end")
+      .attr("font-size", 11)
+      .attr("fill", cssVar("--text-secondary"))
+      .text(
+        when.toLocaleDateString("en-GB", {
+          weekday: narrow ? undefined : "short",
+          day: "2-digit",
+          month: "2-digit",
+        })
+      );
+
+    let cursor = padL;
+    for (const part of SOURCE_PARTS) {
+      const w = span(d[part.key] || 0);
+      if (w < 0.6) continue;
+      svg
+        .append("rect")
+        .attr("x", cursor)
+        // A 2px surface gap between segments, so the boundary is a gap
+        // and not only a change of hue.
+        .attr("width", Math.max(1, w - 2))
+        .attr("y", y + 5)
+        .attr("height", rowH - 12)
+        .attr("rx", 3)
+        .attr("fill", cssVar(part.color))
+        .on("mousemove", (event) =>
+          showTip(
+            tipRows(when.toLocaleDateString("en-GB"), [
+              {
+                color: part.color,
+                label: part.name,
+                value: `${fmt(d[part.key], 2)} kWh (${fmt(
+                  (100 * d[part.key]) / d.kwh,
+                  0
+                )}%)`,
+              },
+              { label: "That day", value: `${fmt(d.kwh, 2)} kWh` },
+            ]),
+            event
+          )
+        )
+        .on("mouseleave", hideTip);
+      cursor += w;
+    }
+
+    svg
+      .append("text")
+      .attr("x", cursor + 6)
+      .attr("y", y + rowH / 2 + 3)
+      .attr("font-size", 11)
+      .attr("fill", cssVar("--text-secondary"))
+      .text(
+        narrow
+          ? `${fmt(d.kwh, 1)} kWh`
+          : `${fmt(d.kwh, 1)} kWh · ${fmt(
+              (100 * (d.pv + d.battery)) / d.kwh,
+              0
+            )}% own`
+      );
+  });
+
+  if (table) {
+    const saving = (src.public_chf_per_kwh || 0) - (src.import_chf_per_kwh || 0);
+    table.innerHTML = `
+      <table class="data">
+        <thead><tr>
+          <th>Day</th><th>Roof</th><th>Battery</th><th>Grid</th><th>Total</th><th>Self-supplied</th>
+        </tr></thead>
+        <tbody>${days
+          .map(
+            (d) => `<tr>
+              <td>${new Date(`${d.day}T12:00:00`).toLocaleDateString("en-GB")}</td>
+              <td>${fmt(d.pv, 2)}</td>
+              <td>${fmt(d.battery, 2)}</td>
+              <td>${fmt(d.grid, 2)}</td>
+              <td>${fmt(d.kwh, 2)} kWh</td>
+              <td>${fmt((100 * (d.pv + d.battery)) / d.kwh, 0)}%</td>
+            </tr>`
+          )
+          .join("")}
+          <tr>
+            <td><strong>All ${fmt(src.days, 0)} days recorded</strong></td>
+            <td><strong>${fmt(src.pv_kwh, 2)}</strong></td>
+            <td><strong>${fmt(src.battery_kwh, 2)}</strong></td>
+            <td><strong>${fmt(src.grid_kwh, 2)}</strong></td>
+            <td><strong>${fmt(src.kwh, 2)} kWh</strong></td>
+            <td><strong>${fmt(pct(own), 0)}%</strong></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="chart-note">
+        What the mix is worth: a kWh the roof or the battery supplied saves
+        the whole ${fmt(src.public_chf_per_kwh, 2)} a public charger would
+        have charged for it, a bought one saves
+        ${fmt(src.public_chf_per_kwh, 2)} less the
+        ${fmt(src.import_chf_per_kwh, 2)} it cost, so
+        ${fmt(saving, 2)}. The counter on the energy page already splits it
+        exactly that way - the ${fmt(src.import_chf_per_kwh, 2)} of a
+        self-supplied kWh is credited to the roof in the solar stream and
+        the ${fmt(saving, 2)} on top of it to the charger - which is why
+        this mix moves money between the two paybacks but never changes
+        the total. Charging at noon is worth more than charging at
+        midnight; it is the roof that earns the difference, not the car.
+      </p>`;
+  }
+}
+
 function renderSessions(payload) {
   const container = document.getElementById("chartSessions");
   const table = document.getElementById("tableSessions");
@@ -96,6 +272,16 @@ function renderSessions(payload) {
               value: `${fmt(s.peak_kw, 1)} kW`,
             },
             {
+              label: "Self-supplied",
+              value:
+                s.own_pct === null || s.own_pct === undefined
+                  ? "-"
+                  : `${fmt(s.own_pct, 0)}% (roof ${fmt(s.pv_kwh, 1)}, battery ${fmt(
+                      s.battery_kwh,
+                      1
+                    )}, grid ${fmt(s.grid_kwh, 1)} kWh)`,
+            },
+            {
               label: "Source",
               value: s.measured
                 ? "Clamp meter on the feed"
@@ -124,7 +310,7 @@ function renderSessions(payload) {
 
   table.innerHTML = `
     <table class="data">
-      <thead><tr><th>Start</th><th>Duration</th><th>Energy</th><th>Cost</th><th>Peak</th><th>Source</th></tr></thead>
+      <thead><tr><th>Start</th><th>Duration</th><th>Energy</th><th>Cost</th><th>Peak</th><th>Self-supplied</th><th>Source</th></tr></thead>
       <tbody>${(payload.sessions || [])
         .map(
           (s) => `<tr>
@@ -133,6 +319,9 @@ function renderSessions(payload) {
             <td>${fmt(s.energy_kwh, 2)} kWh</td>
             <td>${cost(s.energy_kwh)}</td>
             <td>${fmt(s.peak_kw, 1)} kW</td>
+            <td>${
+              s.own_pct === null || s.own_pct === undefined ? "-" : `${fmt(s.own_pct, 0)}%`
+            }</td>
             <td>${s.measured ? "Measured" : "Reconstructed"}</td>
           </tr>`
         )
@@ -277,6 +466,7 @@ async function loadSessions() {
     ]);
     lastPayloads = { runs: sessions, compare: crosscheck };
     renderSessions(sessions);
+    renderSources(sessions.sources);
     renderEvents(events);
     renderCrosscheck(crosscheck);
   } catch (err) {
@@ -294,6 +484,7 @@ let lastPayloads = null;
 onViewportResize(() => {
   if (!lastPayloads) return;
   renderSessions(lastPayloads.runs);
+  renderSources(lastPayloads.runs.sources);
   renderCrosscheck(lastPayloads.compare);
 });
 

@@ -625,12 +625,15 @@ async def finance() -> dict:
                 "name": "Car charged at home",
                 "chf": round(ev_chf, 2),
                 "days": round(ev_days, 2),
-                "basis": "%.1f kWh into the car%s, %.0f%% of it off the roof or the "
-                "battery; %.2f/kWh saved against %.2f at a public charger"
+                "basis": "%.1f kWh into the car%s - %.0f%% straight off the roof, "
+                "%.0f%% out of the battery, %.0f%% off the grid; %.2f/kWh saved "
+                "against %.2f at a public charger"
                 % (
                     ev_kwh,
                     " since %s" % ev["first"][:10] if ev["first"] else "",
-                    100.0 * ev["own_kwh"] / ev_kwh if ev_kwh > 0 else 0.0,
+                    100.0 * ev["pv_kwh"] / ev_kwh if ev_kwh > 0 else 0.0,
+                    100.0 * ev["battery_kwh"] / ev_kwh if ev_kwh > 0 else 0.0,
+                    100.0 * ev["grid_kwh"] / ev_kwh if ev_kwh > 0 else 0.0,
                     ev_chf / ev_kwh if ev_kwh > 0 else 0.0,
                     settings.ev_public_chf_per_kwh,
                 ),
@@ -777,6 +780,16 @@ async def wallbox_sessions(days: int = Query(30, ge=1, le=366)) -> dict:
             sum(s["energy_kwh"] for s in sessions if s.get("measured")), 3
         ),
         "measured_count": sum(1 for s in sessions if s.get("measured")),
+        # Where the energy came from, over the same window: the page draws
+        # it per day and the sessions carry their own share of it. The two
+        # prices ride along so the page can say what the mix is worth
+        # without fetching the whole finance payload.
+        "sources": {
+            **store.wallbox_energy_split(since),
+            "public_chf_per_kwh": settings.ev_public_chf_per_kwh,
+            "import_chf_per_kwh": _rate_at(date.today())[0],
+            "currency": "CHF",
+        },
     }
 
 

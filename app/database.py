@@ -801,7 +801,9 @@ class HistoryStore:
                        strftime(?, timestamp, 'localtime') AS bucket,
                        MAX(consumption_kw
                            - MAX(COALESCE(heater_load_w, 0), 0) / 1000.0, 0) AS house_kw,
-                       consumption_kw,
+                       pv_kw,
+                       battery_charge_kw,
+                       battery_discharge_kw,
                        grid_kw,
                        wallbox_meter_kw,
                        wallbox_energy_kwh
@@ -827,16 +829,40 @@ class HistoryStore:
                     MAX_SAMPLE_SPAN_H,
                 )
             )
-            # How the house as a whole was being supplied at this
-            # moment, which is the share this sample's charging is
-            # attributed by. Pro rata and not marginal: the solar stream
-            # credits every self-consumed kWh at the import tariff
-            # whichever load took it, and the car is not a special case.
-            # The split decides which stream carries a kWh, never the
-            # total - see ev_public_chf_per_kwh.
-            house = row["consumption_kw"] or 0.0
+            # Where the house's supply came from at this moment, which
+            # is how this sample's charging is attributed. Three sources
+            # and they add up: what the roof put into the house directly
+            # (its output less whatever went into the battery or out to
+            # the grid), what the battery gave back, and what was bought.
+            #
+            # Pro rata and not marginal: the solar stream credits every
+            # self-supplied kWh at the import tariff whichever load took
+            # it, and the car is not a special case. Any marginal rule -
+            # "the car was the last load, so the import is the car's" -
+            # is a convention, not a measurement, and this one at least
+            # is the same convention the rest of the page uses. The split
+            # decides which stream carries a kWh, never the total; see
+            # ev_public_chf_per_kwh.
+            pv_direct = max(
+                0.0,
+                (row["pv_kw"] or 0.0)
+                - (row["battery_charge_kw"] or 0.0)
+                - max(0.0, row["grid_kw"] or 0.0),
+            )
+            from_battery = max(0.0, row["battery_discharge_kw"] or 0.0)
             imported = max(0.0, -(row["grid_kw"] or 0.0))
-            grid_share = min(1.0, imported / house) if house > 0 else 0.0
+            supply = pv_direct + from_battery + imported
+            if supply > 0:
+                pv_share = pv_direct / supply
+                battery_share = from_battery / supply
+                grid_share = imported / supply
+            else:
+                # The house drew from nowhere while the car drew
+                # something, which is not a state the house can be in -
+                # a sample lost mid-write, most likely. It goes to the
+                # grid, the assumption that cannot flatter the figure.
+                pv_share = battery_share = 0.0
+                grid_share = 1.0
             metered = row["wallbox_meter_kw"] is not None
             # A negative reading on a load means a clamp on backwards, not a
             # car exporting, so it contributes nothing rather than
@@ -853,8 +879,11 @@ class HistoryStore:
                     # reconstructed one are not the same kind of fact and the
                     # page says so.
                     "metered": metered,
-                    # The share of this sample that came off the grid
-                    # rather than out of the roof or the battery.
+                    # Where this sample's energy came from. The three
+                    # add to 1 and are what the source split, the session
+                    # list and the finance stream are all built from.
+                    "pv_share": pv_share,
+                    "battery_share": battery_share,
                     "grid_share": grid_share,
                     "kwh": measured_kw * hours,
                     "kw": measured_kw,
@@ -1022,10 +1051,12 @@ class HistoryStore:
         """Energy into the car, per year, and how it was supplied.
 
         Per calendar year because the money it stands for is priced at the
-        year's tariff. The own/grid split is pro rata on the house's supply
-        at each sample (see _wallbox_series); it is information about the
-        installation and not an input to the saving, which comes out the
-        same either way.
+        year's tariff. The three-way split - straight off the roof, out of
+        the battery, off the grid - is pro rata on the house's supply at
+        each sample (see _wallbox_series). It is information about when the
+        car charges and not an input to the saving, which comes out the
+        same either way; what the roof and the battery contributed is
+        already paid for in the solar stream at the import tariff.
 
         ``first`` is the first sample carrying any charging at all, and
         ``days`` runs from there to the end of the record rather than over
@@ -1035,7 +1066,8 @@ class HistoryStore:
         charge with no charging in them are real, though, so they stay in.
         """
         by_year: dict[str, float] = {}
-        total = metered = own = grid = 0.0
+        by_day: dict[str, dict[str, float]] = {}
+        total = metered = solar = battery = grid = 0.0
         first: str | None = None
         last: str | None = None
         for sample in self._wallbox_series(since_iso):
@@ -1046,10 +1078,17 @@ class HistoryStore:
             total += kwh
             if sample["metered"]:
                 metered += kwh
+            solar += kwh * sample["pv_share"]
+            battery += kwh * sample["battery_share"]
             grid += kwh * sample["grid_share"]
-            own += kwh * (1.0 - sample["grid_share"])
             year = sample["timestamp"][:4]
             by_year[year] = by_year.get(year, 0.0) + kwh
+            day = by_day.setdefault(
+                sample["bucket"], {"pv": 0.0, "battery": 0.0, "grid": 0.0}
+            )
+            day["pv"] += kwh * sample["pv_share"]
+            day["battery"] += kwh * sample["battery_share"]
+            day["grid"] += kwh * sample["grid_share"]
             if first is None:
                 first = sample["timestamp"]
 
@@ -1065,9 +1104,24 @@ class HistoryStore:
         return {
             "kwh": round(total, 3),
             "metered_kwh": round(metered, 3),
-            "own_kwh": round(own, 3),
+            "pv_kwh": round(solar, 3),
+            "battery_kwh": round(battery, 3),
+            # Everything that did not have to be bought, which is the
+            # figure the money cares about - the two above are the
+            # interesting half of it.
+            "own_kwh": round(solar + battery, 3),
             "grid_kwh": round(grid, 3),
             "by_year": {y: round(v, 3) for y, v in sorted(by_year.items())},
+            "by_day": [
+                {
+                    "day": day,
+                    "pv": round(v["pv"], 3),
+                    "battery": round(v["battery"], 3),
+                    "grid": round(v["grid"], 3),
+                    "kwh": round(v["pv"] + v["battery"] + v["grid"], 3),
+                }
+                for day, v in sorted(by_day.items())
+            ],
             "first": first,
             "days": round(days, 3),
         }
@@ -1405,10 +1459,20 @@ class HistoryStore:
                     "peak_kw": 0.0,
                     "samples": 0,
                     "measured": True,
+                    # Where this session's energy came from. A charge at
+                    # noon and a charge at midnight are the same kWh and
+                    # not the same event, and until now the list could
+                    # not tell them apart.
+                    "pv_kwh": 0.0,
+                    "battery_kwh": 0.0,
+                    "grid_kwh": 0.0,
                 }
                 sessions.append(current)
             current["end"] = sample["timestamp"]
             current["energy_kwh"] += sample["kwh"]
+            current["pv_kwh"] += sample["kwh"] * sample["pv_share"]
+            current["battery_kwh"] += sample["kwh"] * sample["battery_share"]
+            current["grid_kwh"] += sample["kwh"] * sample["grid_share"]
             current["peak_kw"] = max(current["peak_kw"], sample["kw"])
             current["samples"] += 1
             # One reconstructed sample makes the whole session reconstructed.
@@ -1424,6 +1488,14 @@ class HistoryStore:
             session["duration_min"] = round((end - start).total_seconds() / 60.0, 1)
             session["energy_kwh"] = round(session["energy_kwh"], 3)
             session["peak_kw"] = round(session["peak_kw"], 2)
+            for key in ("pv_kwh", "battery_kwh", "grid_kwh"):
+                session[key] = round(session[key], 3)
+            own = session["pv_kwh"] + session["battery_kwh"]
+            session["own_pct"] = (
+                round(100.0 * own / session["energy_kwh"], 1)
+                if session["energy_kwh"] > 0
+                else None
+            )
 
         sessions.reverse()
         return sessions

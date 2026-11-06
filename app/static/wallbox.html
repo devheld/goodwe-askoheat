@@ -49,6 +49,24 @@
   </div>
 
   <div class="chart-card">
+    <h2>Where the charging came from</h2>
+    <p class="zoom-hint">
+      Each day's charging split by what was supplying the house at the
+      moment it flowed: straight off the roof, out of the battery, or
+      bought. Pro rata on the whole supply - no rule for deciding which
+      kWh the car got is a measurement, and this is the convention the
+      rest of the pages use.
+    </p>
+    <p class="chart-verdict" id="sourceVerdict"></p>
+    <div class="legend" id="sourceLegend"></div>
+    <div id="sourceChart"></div>
+    <details class="table-view">
+      <summary>Table view</summary>
+      <div id="sourceTable"></div>
+    </details>
+  </div>
+
+  <div class="chart-card">
     <h2>Charging sessions</h2>
     <p class="chart-note" id="sessionNote">Last 30 days, rebuilt from the recorded samples.</p>
     <div id="chartSessions"></div>
@@ -71,7 +89,7 @@
      number of digits, so the two agree. -->
 <script src="/static/vendor/d3.v7.min.js"></script>
 <script src="/static/chartkit.js?v=2"></script>
-<script src="/static/sessions.js?v=4"></script>
+<script src="/static/sessions.js?v=5"></script>
 <script src="/static/app.js?v=25"></script>
 </body>
 </html>
