@@ -987,6 +987,18 @@ and overstated the energy by a factor of 2.5. Both eras are in the figure
 and every sample says which one it is from, so 119.8 kWh splits into 12.9
 measured and 106.9 reconstructed from the counter's increments.
 
+The split itself is now drawn, three ways rather than two: what the roof
+put into the house directly, what the battery gave back, and what was
+bought, attributed pro rata over the house's whole supply at each
+sample. Over the first 132 kWh that is 18% / 20% / 62% - and per day it
+is not noise but a pattern, because a charge at noon runs 82-100%
+self-supplied and a charge at night runs 0%. The wallbox page has it as
+a stacked bar per day, and every session in the list carries its own
+mix. One subtlety it exposed: the clamp on the charger's feed sees the
+charger's own 4-7 W standby, which is 0.14 kWh a day and was being
+counted as energy that went into a car. The session list already had a
+threshold for that; the split uses the same one.
+
 The one thing here that is not a measurement is the 0.85. It is a
 counterfactual - what the charging would otherwise have cost - and the
 honest version of it depends on what the alternative really was. A 10 A
