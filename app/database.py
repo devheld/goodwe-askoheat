@@ -1075,6 +1075,15 @@ class HistoryStore:
             kwh = sample["kwh"]
             if not kwh:
                 continue
+            # The clamp sees the charger's own standby - 4 to 7 W with
+            # nothing plugged in, which is 0.14 kWh a day and would be
+            # counted here as energy that went into a car and valued
+            # against a public charger. The same threshold the session
+            # list uses keeps it out. The reconstructed era needs no such
+            # guard: it only ever attributes an increment of the
+            # charger's counter, and standby does not move it.
+            if sample["metered"] and sample["kw"] < self._wallbox_meter_busy_kw:
+                continue
             total += kwh
             if sample["metered"]:
                 metered += kwh
