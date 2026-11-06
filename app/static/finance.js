@@ -133,8 +133,20 @@ function finRenderRows() {
         else if (g.break_even_date) says.push(`break-even ${finMonth(g.break_even_date)}`);
         else says.push("no measurable rate yet");
         // The window the rate rests on, in the same breath as the date it
-        // produced. A fortnight and eleven weeks are not the same promise.
-        if (g.days > 0) says.push(`${fmt(g.days, 0)} days measured`);
+        // produced. A fortnight and eleven weeks are not the same promise,
+        // and the combined row rests on both - so it names the range
+        // rather than letting its shortest basis speak for the whole sum.
+        const windows = (g.streams || [])
+          .map((key) => (finance.streams.find((s) => s.key === key) || {}).days || 0)
+          .filter((d) => d > 0);
+        const longest = windows.length ? Math.max(...windows) : 0;
+        if (g.days > 0) {
+          says.push(
+            longest - g.days > 1
+              ? `${fmt(g.days, 0)}-${fmt(longest, 0)} days measured`
+              : `${fmt(g.days, 0)} days measured`
+          );
+        }
         return (
           `<div class="row${g.key === "all" ? " sum" : ""}">` +
           `<div class="head">` +
