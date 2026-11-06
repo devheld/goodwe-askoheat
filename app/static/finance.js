@@ -252,10 +252,19 @@ function finRenderForecast() {
   // summer are not a year, and both directions of that error are real -
   // no sun in January, no more surplus to store in July.
   if (finance.known && finance.days_to_break_even) {
-    parts.push(
-      `At ${finMoney(rate)} a day, measured over ${fmt(days, 0)} recorded days. ` +
-        `A winter without sun will move that.`
-    );
+    // One rate, several bases. Each saving is divided by the days it was
+    // actually measured over, and the car's are a fortnight against the
+    // roof's eleven weeks - quoting the longest window next to the sum
+    // would credit the whole rate to a span most of it was never measured
+    // in. So the sentence names both ends.
+    const bases = finance.streams.filter((s) => s.counted && s.days > 0).map((s) => s.days);
+    const shortest = bases.length ? Math.min(...bases) : days;
+    const basis =
+      days - shortest > 1
+        ? `measured over ${fmt(days, 0)} recorded days for the oldest saving and ` +
+          `${fmt(shortest, 0)} for the newest`
+        : `measured over ${fmt(days, 0)} recorded days`;
+    parts.push(`At ${finMoney(rate)} a day, ${basis}. A winter without sun will move that.`);
   }
   const b = finance.benchmark;
   if (b && b.break_even_date) {
