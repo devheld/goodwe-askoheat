@@ -996,6 +996,41 @@ saving is smaller than this. That is why the price is a setting and not a
 constant, and why `ev_charging` has to be named in
 `FINANCE_RETURN_STREAMS` before it counts for anything.
 
+### 21. One payback was the wrong number of paybacks
+
+Counting the car's savings raised an obvious objection: the charger and
+the roof are independent, and blending them makes one rate that describes
+neither. The objection is right, and the arithmetic of section 20 is what
+proves it - the saving is `public price - tariff`, which contains no PV
+term at all. Every franc of it comes from owning a charger; the roof's
+share of the charging was already in the solar stream at the tariff.
+
+Blended, the two look like this:
+
+| | Net | Rate | Break-even |
+|---|---|---|---|
+| PV, battery, heater | 22'952 | 6.74/day | ~Dec 2035 |
+| Wallbox | 2'000 | 4.78/day | ~Dec 2027 |
+| Together | 24'952 | 11.52/day | Aug 2032 |
+
+The combined row is not wrong, it is uninformative: it reports a
+mediocre investment and an excellent one as one middling one, and the
+middling figure is the flattering one for the expensive half. The two
+also carry different risks - one rate depends on sunshine, the other on
+kilometres driven - so a single number is one risk profile short.
+
+So the card shows three, one row each, and `FINANCE_EXTRA_STREAMS` says
+which savings belong to `INVESTMENT_EXTRA_CHF` rather than to the
+invoice. The grant and the tax deduction come off the invoice's side,
+because that is what they were given for.
+
+The rows are plain HTML, not SVG. A bar that is one number wide needs no
+scale, no axis and no redraw on resize, and three stacked rows of
+name / track / figures read in one pass where three charts would not.
+Everything that used to be prose above the fold - the benchmark's
+caveats, the tariff history, the per-stream basis - moved into the table
+below it. The card is a third of its old height and says more.
+
 ## Setup
 
 ```

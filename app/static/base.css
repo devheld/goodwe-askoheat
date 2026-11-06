@@ -314,6 +314,52 @@ table.data th, table.data td {
 }
 table.data th:first-child, table.data td:first-child { text-align: left; }
 table.data th { color: var(--text-secondary); font-weight: 600; }
+/* Payback rows: one investment per row, each with the savings that came
+   from that investment. A track the width of the sum and a fill the width
+   of what has come back - the distance between them IS the answer, which
+   is why it is a bar and not three numbers. One series colour, a neutral
+   track, and every row labelled with its own name and figures, so
+   identity never rests on colour and no legend is needed. */
+.payback { display: grid; gap: 10px; margin: 0 0 12px; }
+.payback .row { display: grid; gap: 4px; }
+.payback .row.sum {
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+}
+.payback .head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+.payback .what { font-weight: 600; color: var(--text-primary); }
+.payback .figure {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.payback .track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--gridline);
+  overflow: hidden;
+}
+.payback .fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: var(--series-grid-export);
+}
+.payback .says {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* The cross-check between the charger and the clamp on its feed, as a
    stack rather than as four columns one of which is a sentence. Used below
    560px; above it the same rows are a table. */

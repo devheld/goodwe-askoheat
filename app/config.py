@@ -70,6 +70,20 @@ def _tariffs() -> tuple[tuple[int, float, float], ...]:
     return tuple(sorted(entries, key=lambda e: e[0]))
 
 
+def _finance_extra_streams() -> tuple[str, ...]:
+    """Which savings belong to investment_extra_chf and not to the invoice.
+
+    The charger is a separate investment that happens to share a house
+    with the roof: it pays itself off out of kilometres driven, the roof
+    out of sunshine, and a single blended rate belongs to neither - it
+    reports the roof as about twice as good as it is and the charger as a
+    fraction of what it is. So the two sums are kept apart and the
+    combined figure is a third row rather than the only one.
+    """
+    raw = os.environ.get("FINANCE_EXTRA_STREAMS", "ev_charging")
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 def _finance_return_streams() -> tuple[str, ...]:
     """Which measured savings are allowed to pay off the investment.
 
@@ -251,6 +265,10 @@ class Settings:
     tax_deduction_rate: float
     investment_date: str
     finance_return_streams: tuple[str, ...]
+    # Which of those streams pay off investment_extra_chf rather than the
+    # invoice. See _finance_extra_streams: three paybacks, because the
+    # charger and the roof earn their money from different things.
+    finance_extra_streams: tuple[str, ...]
 
     # The yardstick: what the installation was sold as doing. Taken from
     # the quote that led to the order, so the dashboard can answer "is it
@@ -492,6 +510,7 @@ def load_settings() -> Settings:
         tax_deduction_rate=float(os.environ.get("TAX_DEDUCTION_RATE", "1.0")),
         investment_date=os.environ.get("INVESTMENT_DATE", "").strip(),
         finance_return_streams=_finance_return_streams(),
+        finance_extra_streams=_finance_extra_streams(),
         benchmark_label=os.environ.get("BENCHMARK_LABEL", "").strip(),
         benchmark_kwp=float(os.environ.get("BENCHMARK_KWP", "0")),
         benchmark_kwh_per_year=float(os.environ.get("BENCHMARK_KWH_PER_YEAR", "0")),

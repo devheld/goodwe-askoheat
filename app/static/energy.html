@@ -267,18 +267,17 @@
   <div class="chart-card" id="financeCard" hidden>
     <h2>Finance</h2>
     <p class="zoom-hint">
-      What the installation cost against what it has saved since the
-      recording started. This card ignores the period buttons above - a
-      payback is a running total, not a slice. The savings are measured;
-      the break-even date is the one projection here, and it says what
-      rate it rests on.
+      Three paybacks: the roof on its own, the charger on its own, and both
+      together. Measured savings against real costs - only the break-even
+      dates are projections. Not period-scoped: a payback is a running
+      total, not a slice.
     </p>
     <p class="chart-verdict" id="financeVerdict"></p>
     <div id="financeWrap"></div>
-    <p class="chart-note" id="financeBenchmark"></p>
-    <p class="chart-note" id="financeForecast"></p>
+    <p class="chart-note" id="financeNote"></p>
     <details class="table-view">
       <summary>Table view</summary>
+      <p class="chart-note" id="financeBenchmark"></p>
       <div id="financeTable"></div>
     </details>
   </div>
@@ -290,6 +289,6 @@
 <script src="/static/vendor/d3.v7.min.js"></script>
 <script src="/static/chartkit.js?v=2"></script>
 <script src="/static/energy.js?v=16"></script>
-<script src="/static/finance.js?v=11"></script>
+<script src="/static/finance.js?v=12"></script>
 </body>
 </html>

@@ -1,30 +1,34 @@
-// Finanzen: what the installation cost against what it has saved so far.
+// Finance: three paybacks, one row each.
 //
-// Why this form: the question has exactly two quantities in the same unit -
-// what went out and what has come back - so it is two bars on one scale,
-// and the distance between their ends IS the answer. A progress ring or a
-// percentage would hide that distance behind a number; two bars let it be
-// read off directly, and the day the lower bar passes the upper one is the
-// day the thing is paid off.
+// Why three. The roof and the charger are separate investments that
+// happen to share a house. The roof earns its money from sunshine, the
+// charger from kilometres driven, and a single blended rate belongs to
+// neither of them: it reports the roof as about twice as good as it is
+// and the charger as a fraction of what it is. So each sum is shown
+// against the savings that actually came from it, and the combined figure
+// is the third row rather than the only one.
 //
-// One hue, not two. The investment is a neutral track because it is the
-// target and not a measurement; the return is the one colored series.
-// Both bars are labelled with their own name and amount, so identity never
-// rests on color and no legend box is needed.
+// Why rows and not a chart. Each row has exactly two quantities in the
+// same unit - what went out and what has come back - so the bar is a
+// track the width of the investment and a fill the width of the return,
+// and the gap between them IS the answer. Three of those stacked read in
+// one pass; three charts would not. They are plain HTML rather than SVG
+// because a bar that is one number wide needs no scale, no axis and no
+// redraw on resize - the browser reflows it.
 //
-// Everything in the return is measured savings. The only projection is the
-// break-even date, and it is printed next to the daily rate and the number
-// of recorded days that rate comes from - a payback date drawn from eleven
-// weeks of late-summer sun is an estimate wearing a calendar's clothes.
+// One series colour and a neutral track. Every row carries its own name,
+// its own figures and its own date, so identity never rests on colour and
+// there is no legend to read. The only projection anywhere here is the
+// break-even date, and each row prints the number of measured days its
+// rate rests on - the car's fortnight is not the roof's eleven weeks.
 //
-// The helpers (fmt, cssVar, money, chartWidth, onViewportResize) come
-// from chartkit.js, which this page loads first. This card lives on the
-// energy page but is deliberately not period-scoped: the period buttons
-// slice the charts above it, and a payback is a running total.
-
-const FIN_BAR_H = 20;
-const FIN_LABEL_H = 17;
-const FIN_GROUP_GAP = 14;
+// Everything else - the breakdown of the invoice, the tariff history, the
+// benchmark against the quote, and each stream with what it was priced at
+// - is in the table below the fold. The card itself stays short.
+//
+// The helpers (fmt, cssVar, money) come from chartkit.js, which this page
+// loads first. This card is deliberately not period-scoped: the period
+// buttons slice the charts above it, and a payback is a running total.
 
 let finance = null;
 
@@ -41,6 +45,12 @@ function finMoney(value, digits = 2) {
   })} ${cur}`;
 }
 
+// Whole francs, no unit: the rows print a pair of these and the unit once.
+function finInt(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return Math.round(value).toLocaleString("en-GB");
+}
+
 function finEscape(text) {
   return String(text).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
@@ -55,15 +65,21 @@ function finDate(iso) {
   });
 }
 
+// A break-even date is accurate to a season at best, so the rows print a
+// month and the day is left to the verdict line.
+function finMonth(iso) {
+  return new Date(iso).toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+}
+
 function renderFinance() {
   if (!finance) return;
   const card = finEl("financeCard");
   if (!card) return;
   card.hidden = false;
   finRenderVerdict();
-  finRenderBars();
+  finRenderRows();
+  finRenderNote();
   finRenderBenchmark();
-  finRenderForecast();
   finRenderTable();
 }
 
@@ -78,7 +94,9 @@ function finRenderVerdict() {
     // against an investment of zero, which would read as instant profit.
     text = "The invoice is not entered yet, so there is nothing to pay off against.";
   } else if (finance.remaining_chf > 0) {
-    text = `${finMoney(finance.remaining_chf, 0)} to go before the installation has paid for itself.`;
+    text = `${finMoney(finance.remaining_chf, 0)} to go on everything together`;
+    if (finance.break_even_date) text += `, break-even ${finDate(finance.break_even_date)}`;
+    text += ".";
   } else {
     color = cssVar("--success");
     text = `Paid for itself. ${finMoney(-finance.remaining_chf, 0)} of profit so far.`;
@@ -91,76 +109,81 @@ function finRenderVerdict() {
       : "");
 }
 
-function finRenderBars() {
+function finRenderRows() {
   const wrap = finEl("financeWrap");
   if (!wrap) return;
-
-  // No invoice, no bars. A lone bar would be scaled against itself and
-  // run the full width, which reads as a finished job - the exact wrong
-  // impression. The figure is in the verdict line either way.
-  if (!finance.known) {
+  const groups = finance.groups || [];
+  // Nothing to pay off, nothing to draw. A lone full-width bar would read
+  // as a finished job, which is the exact wrong impression.
+  if (!groups.length) {
     wrap.innerHTML = "";
     return;
   }
+  const cur = finance.currency || "CHF";
 
-  const bars = [
-    {
-      name: "Net investment",
-      value: finance.investment.net,
-      fill: cssVar("--gridline"),
-      stroke: cssVar("--baseline"),
-    },
-  ];
-  // The quote's promise, as an outline: a target, not money in the
-  // account, and the one bar here that was never measured. Dashed rather
-  // than tinted, so the three bars are told apart by their treatment and
-  // their own labels instead of by three hues.
-  // Two bars and no more. The benchmark lives in the sentence under the
-  // chart rather than on this axis: it spans a different window, and a
-  // window bar scaled against the whole investment would be a few pixels
-  // of nothing next to a counter that covers months.
-  bars.push({
-    name: "Saved so far",
-    value: finance.returned_chf,
-    fill: cssVar("--series-grid-export"),
-    stroke: null,
-  });
-
-  const width = chartWidth(wrap);
-  const max = Math.max(...bars.map((b) => Math.abs(b.value)), 1);
-  const group = FIN_LABEL_H + FIN_BAR_H + FIN_GROUP_GAP;
-  const height = bars.length * group - FIN_GROUP_GAP;
-
-  let svg = "";
-  bars.forEach((bar, i) => {
-    const top = i * group;
-    const barY = top + FIN_LABEL_H;
-    // A 2 px floor so a bar that is a rounding error from zero is still a
-    // visible mark rather than nothing at all.
-    const w = Math.max(2, (Math.abs(bar.value) / max) * width);
-    svg += `<text x="0" y="${top + 12}" font-size="12" fill="${cssVar("--text-secondary")}">${finEscape(bar.name)}</text>`;
-    svg += `<text x="${width}" y="${top + 12}" font-size="12" text-anchor="end" font-weight="600" fill="${cssVar("--text-primary")}">${finEscape(finMoney(bar.value, 0))}</text>`;
-    const stroke = bar.stroke
-      ? ` stroke="${bar.stroke}" stroke-width="1"${
-          bar.dash ? ` stroke-dasharray="${bar.dash}"` : ""
-        }`
-      : "";
-    svg += `<rect x="0" y="${barY}" width="${w}" height="${FIN_BAR_H}" rx="3" fill="${bar.fill}"${stroke} />`;
-  });
-
-  wrap.innerHTML = `
-    <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img"
-         aria-label="Net investment against what has been saved so far">
-      ${svg}
-    </svg>`;
+  wrap.innerHTML =
+    `<div class="payback">` +
+    groups
+      .map((g) => {
+        const pct =
+          g.progress_pct === null ? 0 : Math.max(0, Math.min(100, g.progress_pct));
+        const says = [];
+        if (g.rate_chf_per_day > 0) says.push(`${fmt(g.rate_chf_per_day, 2)}/day`);
+        if (g.days_to_break_even === 0) says.push("paid off");
+        else if (g.break_even_date) says.push(`break-even ${finMonth(g.break_even_date)}`);
+        else says.push("no measurable rate yet");
+        // The window the rate rests on, in the same breath as the date it
+        // produced. A fortnight and eleven weeks are not the same promise.
+        if (g.days > 0) says.push(`${fmt(g.days, 0)} days measured`);
+        return (
+          `<div class="row${g.key === "all" ? " sum" : ""}">` +
+          `<div class="head">` +
+          `<span class="what">${finEscape(g.name)}</span>` +
+          `<span class="figure">${finInt(g.returned_chf)} / ${finInt(g.net)} ${cur}</span>` +
+          `</div>` +
+          `<div class="track"><span class="fill" style="width:${pct.toFixed(
+            1
+          )}%;min-width:${g.returned_chf > 0 ? 2 : 0}px"></span></div>` +
+          `<div class="says">${says.join(" &middot; ")}</div>` +
+          `</div>`
+        );
+      })
+      .join("") +
+    `</div>`;
 }
 
-// The benchmark in words. Two ratios, because they say different things
-// and only together: the money ratio is what the household gets, the
-// production ratio is what the roof does. They come apart here - a battery
-// the quote did not include keeps nearly every kWh in the house at the
-// import tariff instead of exporting half of it at a third of the price,
-// so the money holds up better than the production does.
+// Recorded days are not elapsed days, and the quote's own promise is the
+// one comparison worth a line above the fold. Everything else that used
+// to be in two paragraphs here is in the table.
+function finRenderNote() {
+  const node = finEl("financeNote");
+  if (!node) return;
+  const m = finance.measured;
+  const start = m.earning_since || m.first_record;
+  const parts = [];
+  if (start) {
+    const missing =
+      m.elapsed_days === null || m.elapsed_days === undefined
+        ? 0
+        : m.elapsed_days - m.recorded_days;
+    parts.push(
+      missing < 0.5
+        ? `Measured from ${finDate(start)}, with no gaps.`
+        : `${fmt(m.recorded_days, 0)} of the ${fmt(m.elapsed_days, 0)} days since ` +
+            `${finDate(start)} are recorded; the other ${fmt(missing, 0)} are service ` +
+            `downtime the installation went on saving through, so every total here is a floor.`
+    );
+  }
+  const b = finance.benchmark;
+  if (b && b.break_even_date) {
+    parts.push(
+      `The ${finEscape(b.label)} put the roof at ${fmt(b.payback_years, 0)} years &mdash; ` +
+        `${finMonth(b.break_even_date)}. Breakdown and benchmark in the table.`
+    );
+  }
+  node.innerHTML = parts.join(" ");
+}
+
 function finRenderBenchmark() {
   const node = finEl("financeBenchmark");
   if (!node) return;
@@ -223,66 +246,6 @@ function finRenderBenchmark() {
     `${finance.currency}.`;
 }
 
-function finRenderForecast() {
-  const node = finEl("financeForecast");
-  if (!node) return;
-  const rate = finance.rate_chf_per_day;
-  const days = finance.measured.recorded_days;
-  const parts = [];
-
-  if (!finance.known) {
-    parts.push(
-      `Put the invoice total into <code>INVESTMENT_CHF</code> in the .env file and this becomes a break-even date. ` +
-        `The grant (${finMoney(finance.investment.subsidy, 0)}) and the tax deduction ` +
-        `(${finMoney(finance.investment.tax_deduction, 0)}) are already in.`
-    );
-  } else if (finance.days_to_break_even === null) {
-    parts.push("Not earning at a measurable rate yet, so there is no date to give.");
-  } else if (finance.days_to_break_even === 0) {
-    parts.push(`Already past break-even, and earning ${finMoney(rate)} a day.`);
-  } else {
-    parts.push(
-      `<strong>Break-even in ${fmt(finance.days_to_break_even, 0)} days &mdash; ` +
-        `${finDate(finance.break_even_date)}.</strong>`
-    );
-  }
-
-  // The rate and what it rests on, always: a forecast whose basis is not
-  // stated is a promise rather than an estimate. Eleven weeks of late
-  // summer are not a year, and both directions of that error are real -
-  // no sun in January, no more surplus to store in July.
-  if (finance.known && finance.days_to_break_even) {
-    // One rate, several bases. Each saving is divided by the days it was
-    // actually measured over, and the car's are a fortnight against the
-    // roof's eleven weeks - quoting the longest window next to the sum
-    // would credit the whole rate to a span most of it was never measured
-    // in. So the sentence names both ends.
-    const bases = finance.streams.filter((s) => s.counted && s.days > 0).map((s) => s.days);
-    const shortest = bases.length ? Math.min(...bases) : days;
-    const basis =
-      days - shortest > 1
-        ? `measured over ${fmt(days, 0)} recorded days for the oldest saving and ` +
-          `${fmt(shortest, 0)} for the newest`
-        : `measured over ${fmt(days, 0)} recorded days`;
-    parts.push(`At ${finMoney(rate)} a day, ${basis}. A winter without sun will move that.`);
-  }
-  const b = finance.benchmark;
-  if (b && b.break_even_date) {
-    parts.push(
-      `The ${finEscape(b.label)} put it at ${fmt(b.payback_years, 0)} years from ` +
-        `commissioning &mdash; ${finDate(b.break_even_date)}.`
-    );
-  }
-
-  const streams = finance.streams
-    .filter((s) => s.counted)
-    .map((s) => `${finEscape(s.name)} ${fmt(s.chf, 2)}`)
-    .join(" &middot; ");
-  if (streams) parts.push(`Saved so far: ${streams} ${(finance.currency || "CHF")}.`);
-
-  node.innerHTML = parts.join(" ");
-}
-
 function finRenderTable() {
   const host = finEl("financeTable");
   if (!host) return;
@@ -292,7 +255,7 @@ function finRenderTable() {
     ...(inv.extra
       ? [[finEscape(inv.extra_label), `+${finMoney(inv.extra, 2)}`, "paid outside the solar contract"]]
       : []),
-    ["Grant received", `-${finMoney(inv.subsidy, 2)}`, ""],
+    ["Grant received", `-${finMoney(inv.subsidy, 2)}`, "for the energy installation, so it comes off the invoice's side"],
     [
       "Tax deduction",
       `-${finMoney(inv.tax_benefit, 2)}`,
@@ -310,6 +273,20 @@ function finRenderTable() {
       "Tariff",
       hist.map((h) => `${fmt(h.import_per_kwh, 4)}`).join(" &rarr; "),
       `import, for ${hist.map((h) => h.year).join(" and ")} &mdash; each month is priced at that year's rate`,
+    ]);
+  }
+
+  // Each payback with the streams that pay it off, so the rows above can
+  // be checked against the money they were built from.
+  for (const g of finance.groups || []) {
+    rows.push([
+      `<strong>${finEscape(g.name)}</strong>`,
+      `<strong>${finMoney(g.returned_chf, 2)} / ${finMoney(g.net, 0)}</strong>`,
+      g.break_even_date
+        ? `${fmt(g.rate_chf_per_day, 2)}/day &rarr; ${finDate(g.break_even_date)}, from ${
+            g.streams.join(", ") || "nothing yet"
+          }`
+        : `nothing measurable yet, from ${g.streams.join(", ") || "nothing yet"}`,
     ]);
   }
 
@@ -358,29 +335,7 @@ function finRenderTable() {
           .map((r) => `<tr><td>${finEscape(r[0])}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`)
           .join("")}
       </tbody>
-    </table>
-    <p class="chart-note">${finWindowNote()}</p>`;
-}
-
-// Recorded days are not elapsed days. The difference is service downtime,
-// and the installation went on saving through it unobserved - so the
-// figures above are a floor, and every rate here is per recorded day.
-function finWindowNote() {
-  const m = finance.measured;
-  const start = m.earning_since || m.first_record;
-  const from = start ? finDate(start) : null;
-  if (!from) return "No record yet.";
-  if (m.elapsed_days === null || m.elapsed_days === undefined) {
-    return `Measured from ${from}.`;
-  }
-  const missing = m.elapsed_days - m.recorded_days;
-  if (missing < 0.5) return `Measured from ${from}, with no gaps.`;
-  return (
-    `${fmt(m.recorded_days, 0)} of the ${fmt(m.elapsed_days, 0)} days since ${from} are in ` +
-    `these figures. The other ${fmt(missing, 0)} are service downtime, which the ` +
-    `installation went on saving through unobserved - so every total here is a floor, ` +
-    `and every rate is per recorded day.`
-  );
+    </table>`;
 }
 
 async function fetchFinance() {
@@ -398,7 +353,7 @@ async function fetchFinance() {
 }
 
 // A few francs a day: this does not belong on the dashboard's 30-second
-// clock. Redrawn on resize from the payload already in hand.
-onViewportResize(() => renderFinance());
+// clock. No resize hook either - the rows are HTML and the browser
+// reflows them.
 fetchFinance();
 setInterval(() => fetchFinance(), 600000);

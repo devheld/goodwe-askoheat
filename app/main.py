@@ -486,6 +486,42 @@ async def energy(period: str = Query("today")) -> dict:
     return payload
 
 
+def _payback(key: str, name: str, net: float, members: list[dict]) -> dict:
+    """One investment against the savings that actually came from it.
+
+    Each member stream is divided by the days it was measured over, not by
+    the calendar, so a stream that started late does not have its rate
+    averaged over weeks it did not exist in. A net of zero or less means
+    there is nothing to pay off and no date to give.
+    """
+    returned = round(sum(s["chf"] for s in members), 2)
+    rate = sum(s["chf"] / s["days"] for s in members if s["days"] > 0)
+    remaining = round(net - returned, 2)
+    bases = [s["days"] for s in members if s["days"] > 0]
+    days_left: int | None = None
+    when: date | None = None
+    if net > 0 and remaining <= 0:
+        days_left = 0
+    elif net > 0 and rate > 0:
+        days_left = ceil(remaining / rate)
+        when = date.today() + timedelta(days=days_left)
+    return {
+        "key": key,
+        "name": name,
+        "net": round(net, 2),
+        "returned_chf": returned,
+        "remaining_chf": remaining,
+        "rate_chf_per_day": round(rate, 2),
+        "progress_pct": round(100.0 * returned / net, 1) if net > 0 else None,
+        "days_to_break_even": days_left,
+        "break_even_date": when.isoformat() if when else None,
+        "streams": [s["key"] for s in members],
+        # The shortest window any of this group's rates rests on, which is
+        # what a reader needs to know before trusting the date.
+        "days": round(min(bases), 2) if bases else 0.0,
+    }
+
+
 @app.get("/api/finance")
 async def finance() -> dict:
     """Where the installation stands against what it cost.
@@ -607,9 +643,32 @@ async def finance() -> dict:
         )
 
     counted = [s for s in streams if s["counted"]]
-    returned = round(sum(s["chf"] for s in counted), 2)
-    rate = sum(s["chf"] / s["days"] for s in counted if s["days"] > 0)
-    remaining = round(net - returned, 2)
+    # Three paybacks: the invoice, whatever was paid outside it, and the
+    # two together. The grant and the tax deduction were given for the
+    # energy installation, so they come off the invoice's side and not off
+    # the charger's.
+    extra_members = [s for s in counted if s["key"] in settings.finance_extra_streams]
+    invoice_members = [s for s in counted if s["key"] not in settings.finance_extra_streams]
+    invoice_net = settings.investment_chf - settings.subsidy_chf - tax_benefit
+    groups: list[dict] = []
+    if settings.investment_chf > 0 or invoice_members:
+        groups.append(_payback("invoice", "PV, battery, heater", invoice_net, invoice_members))
+    if settings.investment_extra_chf > 0 or extra_members:
+        groups.append(
+            _payback(
+                "extra",
+                settings.investment_extra_label or "Paid outside the invoice",
+                settings.investment_extra_chf,
+                extra_members,
+            )
+        )
+    # The sum is worth a row only when there is more than one thing in it.
+    if len(groups) > 1:
+        groups.append(_payback("all", "Together", net, counted))
+    combined = groups[-1] if groups else _payback("all", "Together", net, counted)
+    returned = combined["returned_chf"]
+    rate = combined["rate_chf_per_day"]
+    remaining = combined["remaining_chf"]
 
     # Forecast only when there is an invoice to forecast against and the
     # thing is actually earning. Without those the honest answer is no
@@ -627,13 +686,9 @@ async def finance() -> dict:
             elapsed = None
 
     known = settings.investment_chf > 0
-    days_left: int | None = None
-    when: date | None = None
-    if known and remaining > 0 and rate > 0:
-        days_left = ceil(remaining / rate)
-        when = date.today() + timedelta(days=days_left)
-    elif known and remaining <= 0:
-        days_left = 0
+    # One source of truth for the combined forecast: the group above.
+    days_left = combined["days_to_break_even"]
+    when = combined["break_even_date"]
 
     return {
         "currency": "CHF",
@@ -660,12 +715,13 @@ async def finance() -> dict:
         },
         "benchmark": _benchmark(priced, window, days),
         "streams": streams,
+        "groups": groups,
         "returned_chf": returned,
         "remaining_chf": remaining,
-        "progress_pct": round(100.0 * returned / net, 1) if net > 0 else None,
+        "progress_pct": combined["progress_pct"],
         "rate_chf_per_day": round(rate, 2),
         "days_to_break_even": days_left,
-        "break_even_date": when.isoformat() if when else None,
+        "break_even_date": when,
     }
 
 
