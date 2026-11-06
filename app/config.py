@@ -203,6 +203,21 @@ class Settings:
     oil_boiler_efficiency: float
     oil_price_chf_per_litre: float
 
+    # What a kWh costs at a public charger, which is what putting it into
+    # the car at home saves. Zero means "not known" and the stream is left
+    # out altogether rather than valued at nothing.
+    #
+    # The saving per kWh is this price minus the import tariff of the year,
+    # and it does not depend on whether the roof, the battery or the grid
+    # supplied the kWh. One the roof supplied is already credited in the
+    # solar stream at the import tariff, so adding the full public price on
+    # top of it would count those francs twice; one off the grid is in no
+    # stream at all and cost the tariff. Both land on the same increment -
+    # public price less tariff - which is why this needs no allocation to be
+    # right. The split is reported because it says something about the
+    # installation, not because the money depends on it.
+    ev_public_chf_per_kwh: float
+
     # What the installation cost, and what counts as earning it back. These
     # amounts live in .env and never in the repository: an invoice is the
     # household's business. .env.example carries zeros and the explanation.
@@ -221,7 +236,8 @@ class Settings:
     #   is missing instead of starting the clock where the database does.
     # finance_return_streams: which of the measured savings count against
     #   the investment. Heating-instead-of-oil belongs there only if the
-    #   heat pump was on the same invoice.
+    #   heat pump was on the same invoice; ev_charging belongs there if the
+    #   charger does, and investment_extra_chf is where its cost goes.
     investment_chf: float
     # Real money that is not on the invoice. The wallbox was installed and
     # paid for outside the solar contract, and leaving it out would flatter
@@ -465,6 +481,7 @@ def load_settings() -> Settings:
         oil_kwh_per_litre=float(os.environ.get("OIL_KWH_PER_LITRE", "10.0")),
         oil_boiler_efficiency=float(os.environ.get("OIL_BOILER_EFFICIENCY", "0.85")),
         oil_price_chf_per_litre=float(os.environ.get("OIL_PRICE_CHF_PER_LITRE", "1.78")),
+        ev_public_chf_per_kwh=float(os.environ.get("EV_PUBLIC_CHF_PER_KWH", "0")),
         investment_chf=float(os.environ.get("INVESTMENT_CHF", "0")),
         investment_extra_chf=float(os.environ.get("INVESTMENT_EXTRA_CHF", "0")),
         investment_extra_label=os.environ.get(

@@ -949,6 +949,53 @@ it visible before another load is added, which is exactly the question a
 house with a car, a heat pump and an immersion heater on a 25 A connection
 keeps being asked.
 
+### 20. The car is worth more than the tariff, and the split does not matter
+
+A kWh into the car at home is not worth the 0.25 it saved on the
+electricity bill. It is worth what the same kWh costs at a public charger,
+which here is at least 0.85 - the alternative to charging at home is not
+charging for free, it is charging somewhere else.
+
+The obvious way to count that is to split the charging: kWh that came off
+the roof saved the full 0.85, kWh that came off the grid saved 0.85 less
+the 0.25 they cost. That is where the arithmetic gets interesting, because
+the two cases are the same number.
+
+The counter already credits every self-consumed kWh in the solar stream at
+the import tariff, whichever load took it. So a solar kWh in the car has
+already been paid 0.25 and may only be topped up by the difference; a grid
+kWh in the car has been paid nothing and is worth 0.85 less the 0.25 it
+cost. Both come to **the public price less the import tariff**, and the
+saving is therefore
+
+    kWh into the car x (EV_PUBLIC_CHF_PER_KWH - that year's import tariff)
+
+with no allocation anywhere in it. Which is a relief, because the
+allocation is the part that cannot be done honestly: at the sample level
+the house is drawing from the roof, the battery and the grid at once, and
+any rule for deciding which of them the car got is a convention. The
+dashboard still reports the split - 39% off the roof or the battery over
+the first 120 kWh - because it says something true about when the car
+charges. It just is not what the money rests on.
+
+What measures it: a Shelly 3EM clamp on the charger's feed since 31 Oct
+2026, read every tick like any other load. Before that date the only
+witness was the charger's own cumulative register, because its power
+reading cannot be integrated - it is polled on a slow clock and not at all
+while a car is drawing, so the same snapshot got repeated into every row
+and overstated the energy by a factor of 2.5. Both eras are in the figure
+and every sample says which one it is from, so 119.8 kWh splits into 12.9
+measured and 106.9 reconstructed from the counter's increments.
+
+The one thing here that is not a measurement is the 0.85. It is a
+counterfactual - what the charging would otherwise have cost - and the
+honest version of it depends on what the alternative really was. A 10 A
+socket in the garage at the house tariff is a cheaper alternative than a
+public charger, and to the extent that it was available, the wallbox's own
+saving is smaller than this. That is why the price is a setting and not a
+constant, and why `ev_charging` has to be named in
+`FINANCE_RETURN_STREAMS` before it counts for anything.
+
 ## Setup
 
 ```

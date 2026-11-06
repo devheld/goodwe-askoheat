@@ -535,6 +535,27 @@ async def finance() -> dict:
         hp_kwh * oil["litres_per_kwh"] * oil["price_chf_per_litre"] - priced["heatpump_chf"]
     )
 
+    # The car. Every kWh that went into it here is a kWh not bought at a
+    # public charger, and the saving is the difference: the public price
+    # less the tariff this one was charged at. Whether the roof, the
+    # battery or the grid supplied it does not enter into it. A kWh off the
+    # roof is already credited in the solar stream at the import tariff, so
+    # paying it the full public price here would count those francs twice;
+    # a kWh off the grid is in no stream at all and cost the tariff. Both
+    # come to the same increment, which is why this is exact without any
+    # allocation - the split below is printed because it is worth knowing,
+    # not because the money turns on it.
+    ev = store.wallbox_energy_split(energy["since"])
+    ev_kwh = ev["kwh"]
+    ev_chf = 0.0
+    if settings.ev_public_chf_per_kwh > 0:
+        for year, kwh in ev["by_year"].items():
+            year_rate, _ = _rate_at(date(int(year), 7, 1))
+            ev_chf += kwh * max(0.0, settings.ev_public_chf_per_kwh - year_rate)
+    # A rate drawn from less than a day of charging is noise, not a rate, so
+    # under that the stream reports its francs and no projection.
+    ev_days = ev["days"] if ev["days"] >= 1.0 else 0.0
+
     streams = [
         {
             "key": "pv_self",
@@ -561,6 +582,24 @@ async def finance() -> dict:
             % (hp_kwh, round(totals["heatpump_hours"] or 0.0), round(totals["hours"] or 0.0)),
         },
     ]
+    if settings.ev_public_chf_per_kwh > 0:
+        streams.append(
+            {
+                "key": "ev_charging",
+                "name": "Car charged at home",
+                "chf": round(ev_chf, 2),
+                "days": round(ev_days, 2),
+                "basis": "%.1f kWh into the car%s, %.0f%% of it off the roof or the "
+                "battery; %.2f/kWh saved against %.2f at a public charger"
+                % (
+                    ev_kwh,
+                    " since %s" % ev["first"][:10] if ev["first"] else "",
+                    100.0 * ev["own_kwh"] / ev_kwh if ev_kwh > 0 else 0.0,
+                    ev_chf / ev_kwh if ev_kwh > 0 else 0.0,
+                    settings.ev_public_chf_per_kwh,
+                ),
+            }
+        )
     for stream in streams:
         stream["counted"] = stream["key"] in settings.finance_return_streams
         stream["chf_per_day"] = (

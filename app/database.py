@@ -801,6 +801,8 @@ class HistoryStore:
                        strftime(?, timestamp, 'localtime') AS bucket,
                        MAX(consumption_kw
                            - MAX(COALESCE(heater_load_w, 0), 0) / 1000.0, 0) AS house_kw,
+                       consumption_kw,
+                       grid_kw,
                        wallbox_meter_kw,
                        wallbox_energy_kwh
                 FROM readings
@@ -825,6 +827,16 @@ class HistoryStore:
                     MAX_SAMPLE_SPAN_H,
                 )
             )
+            # How the house as a whole was being supplied at this
+            # moment, which is the share this sample's charging is
+            # attributed by. Pro rata and not marginal: the solar stream
+            # credits every self-consumed kWh at the import tariff
+            # whichever load took it, and the car is not a special case.
+            # The split decides which stream carries a kWh, never the
+            # total - see ev_public_chf_per_kwh.
+            house = row["consumption_kw"] or 0.0
+            imported = max(0.0, -(row["grid_kw"] or 0.0))
+            grid_share = min(1.0, imported / house) if house > 0 else 0.0
             metered = row["wallbox_meter_kw"] is not None
             # A negative reading on a load means a clamp on backwards, not a
             # car exporting, so it contributes nothing rather than
@@ -841,6 +853,9 @@ class HistoryStore:
                     # reconstructed one are not the same kind of fact and the
                     # page says so.
                     "metered": metered,
+                    # The share of this sample that came off the grid
+                    # rather than out of the roof or the battery.
+                    "grid_share": grid_share,
                     "kwh": measured_kw * hours,
                     "kw": measured_kw,
                 }
@@ -1002,6 +1017,60 @@ class HistoryStore:
             if sample["metered"]:
                 measured[bucket] = measured.get(bucket, 0.0) + sample["kwh"]
         return buckets, measured
+
+    def wallbox_energy_split(self, since_iso: str) -> dict:
+        """Energy into the car, per year, and how it was supplied.
+
+        Per calendar year because the money it stands for is priced at the
+        year's tariff. The own/grid split is pro rata on the house's supply
+        at each sample (see _wallbox_series); it is information about the
+        installation and not an input to the saving, which comes out the
+        same either way.
+
+        ``first`` is the first sample carrying any charging at all, and
+        ``days`` runs from there to the end of the record rather than over
+        the whole history: the car arrived two months after the recording
+        started, and a rate per recorded day would otherwise be averaged
+        over weeks when there was nothing to charge. Days since the first
+        charge with no charging in them are real, though, so they stay in.
+        """
+        by_year: dict[str, float] = {}
+        total = metered = own = grid = 0.0
+        first: str | None = None
+        last: str | None = None
+        for sample in self._wallbox_series(since_iso):
+            last = sample["timestamp"]
+            kwh = sample["kwh"]
+            if not kwh:
+                continue
+            total += kwh
+            if sample["metered"]:
+                metered += kwh
+            grid += kwh * sample["grid_share"]
+            own += kwh * (1.0 - sample["grid_share"])
+            year = sample["timestamp"][:4]
+            by_year[year] = by_year.get(year, 0.0) + kwh
+            if first is None:
+                first = sample["timestamp"]
+
+        days = 0.0
+        if first and last:
+            days = max(
+                0.0,
+                (
+                    datetime.fromisoformat(last) - datetime.fromisoformat(first)
+                ).total_seconds()
+                / 86400.0,
+            )
+        return {
+            "kwh": round(total, 3),
+            "metered_kwh": round(metered, 3),
+            "own_kwh": round(own, 3),
+            "grid_kwh": round(grid, 3),
+            "by_year": {y: round(v, 3) for y, v in sorted(by_year.items())},
+            "first": first,
+            "days": round(days, 3),
+        }
 
     def wallbox_crosscheck(self, since_iso: str) -> dict:
         """Do the charger and the clamp on its feed agree?
