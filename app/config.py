@@ -239,12 +239,17 @@ class Settings:
     shelly_port: int
     shelly_timeout_s: float
 
-    # What the heat pump draws flat out, for the chart's y axis. A curve
-    # measured against the machine's own ceiling says how hard it is
-    # working; one rescaled to its own maximum every time only says what
-    # happened to be the busiest minute on screen. 0 turns it off and the
-    # axis follows the data again. It never clips: a reading above the
-    # ceiling pushes the axis up rather than disappearing.
+    # The heat pump chart's y axis, in kW. A curve measured against a
+    # fixed ceiling says how hard the machine is working; one rescaled to
+    # its own maximum every time only says what happened to be the busiest
+    # minute on screen. 0 turns it off and the axis follows the data again.
+    # It never clips: a reading above the ceiling pushes the axis up rather
+    # than disappearing, which is what makes it safe to set this to the
+    # machine's observed working range instead of a nameplate nobody has
+    # read. Set it high and the whole record is drawn in the bottom third
+    # of the chart - this pump compresses at a flat 1.1-1.2 kW, so a 4 kW
+    # axis spends two thirds of its height on current that has never been
+    # drawn.
     heatpump_max_kw: float
 
     # The hours the pump is meant to heat in, on the local clock, and what

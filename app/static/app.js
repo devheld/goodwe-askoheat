@@ -654,8 +654,10 @@ function renderHeatpump(points, hours) {
   if (note) {
     note.textContent = ceiling > 0
       ? `Measured by its own clamp meter on the pump's feed - not the house ` +
-        `load with everything else subtracted off it. The axis runs to ` +
-        `${fmt(ceiling, 1)} kW, what the pump draws flat out.`
+        `load with everything else subtracted off it. The axis is fixed at ` +
+        `${fmt(ceiling, 1)} kW so the curve shows how hard the machine is ` +
+        `working rather than being rescaled to the busiest minute on screen; ` +
+        `a peak above it lifts the axis instead of being cut off.`
       : "Measured by its own clamp meter on the pump's feed - not the house " +
         "load with everything else subtracted off it.";
   }
