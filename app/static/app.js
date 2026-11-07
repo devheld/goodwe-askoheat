@@ -647,7 +647,14 @@ function renderHeatpump(points, hours) {
     for (const p of series[0].points) {
       if (p.v !== null && p.v > peak) peak = p.v;
     }
-    opts.yMax = Math.max(ceiling, Math.ceil(peak * 10) / 10);
+    // A peak above the ceiling lifts the axis, but not to the peak itself:
+    // the chart draws four intervals, so an axis at 2.15 is labelled 0.0,
+    // 0.5, 1.1, 1.6, 2.2 and every gridline lands on a number nobody
+    // thinks in. Rounded up to a fifth of the ceiling, the lifted axis
+    // divides as cleanly as the unlifted one does.
+    const step = ceiling / 5;
+    const lifted = Math.round(Math.ceil(peak / step) * step * 100) / 100;
+    opts.yMax = Math.max(ceiling, lifted);
   }
   renderLineChart(el("heatpumpChartWrap"), series, opts);
   const note = el("heatpumpNote");
