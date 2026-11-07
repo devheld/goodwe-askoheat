@@ -234,6 +234,12 @@ function renderIce(ice) {
   chart.innerHTML = "";
   const svg = newSvg(chart, width, height);
   const curve = ice.curve || [];
+  const narrow = width < 560;
+  // Two labelled months next to each other collide at phone width, where
+  // "5.0 km/kWh" is a sixth of the chart. The unit moves to the axis note
+  // there, and a label whose neighbour is also labelled goes below the
+  // line instead of above it.
+  let lastLabelled = -9;
   const byMonth = new Map(
     (ice.by_month || []).map((m) => [parseInt(m.month.slice(5, 7), 10) - 1, m])
   );
@@ -303,14 +309,16 @@ function renderIce(ice) {
         .attr("fill", cssVar("--series-wallbox"))
         .attr("stroke", cssVar("--surface-1"))
         .attr("stroke-width", 2);
+      const below = i - lastLabelled <= 1;
+      lastLabelled = i;
       svg
         .append("text")
         .attr("x", x(i))
-        .attr("y", y(value) - 10)
-        .attr("text-anchor", "middle")
+        .attr("y", y(value) + (below ? 17 : -10))
+        .attr("text-anchor", i === 11 ? "end" : "middle")
         .attr("font-size", 10)
         .attr("fill", cssVar("--text-secondary"))
-        .text(`${fmt(value, 1)} km/kWh`);
+        .text(narrow ? fmt(value, 1) : `${fmt(value, 1)} km/kWh`);
     }
     // A hit target the width of the month, not the width of the dot.
     svg
@@ -384,6 +392,7 @@ function renderIce(ice) {
         and winter tyres, so the model is in the right place; it is still a
         floor, because a commute happens at the cold end of the day and a
         short winter trip pays for heating the cabin over fewer kilometres.
+        The curve and the dots are km per kWh.
         <code>ICE_L_PER_100KM</code> is ${fmt(ice.l_per_100km, 1)} l/100 km,
         and it carries no season of its own although a cold engine also
         drinks more - which makes this the conservative comparison. The
