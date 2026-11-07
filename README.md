@@ -678,6 +678,25 @@ is only the line the record is measured against. Energy outside it is
 classified per sample rather than per run, so a run from 07:30 to 08:30 is
 half a breach instead of being rounded to a whole answer either way.
 
+It is two windows, not one, because the controller holds two time
+programs: a later start on working days than at the weekend.
+`HEATPUMP_WEEKEND_WINDOW_FROM_H` and `..._TO_H` carry the Saturday and
+Sunday pair and fall back to the weekday pair when they are unset, so a
+house on the same hours all week still configures one window. A single
+pair could only be set to the earlier of two starts, which would read
+every working morning before it as a breach, or to the later one, which
+would excuse every weekend morning - and a measurement that is wrong two
+days out of seven is not a measurement. The classification is per sample
+and per local weekday, which also makes the night between two days
+asymmetric: Friday 18:00 to Saturday 08:00 is fourteen hours, Sunday 18:00
+to Monday 10:00 is sixteen, and the breakfast line spans whichever night
+it actually was.
+
+The shaded band on the chart is therefore drawn per row instead of once
+behind all of them. Each band is the full row height, so days on the same
+program touch and a working week still reads as one block with the weekend
+stepping out of it, rather than as seven separate marks.
+
 **The chart is a clock, not a bar chart**, because the question is *when*
 and not how much: 00:00 to 24:00 across, one row per day down, the intended
 window shaded behind the rows. A run outside the window then needs no

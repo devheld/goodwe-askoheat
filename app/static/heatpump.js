@@ -38,14 +38,50 @@ function hpStartOfDay(date) {
 // closes to the hour it opens again. This is the span the question "did
 // anything reheat while we slept" is actually about, and it straddles
 // midnight, so it is not a calendar day.
-function hpLastNight(now, fromH, toH) {
+// Which window applies to a given day. The controller holds two time
+// programs and the chart has to agree with the classification the server
+// made per sample, so both sides read the weekday the same way.
+function hpWindowFor(date, window) {
+  const weekend = date.getDay() === 0 || date.getDay() === 6;
+  return weekend && window.weekend_from_h != null
+    ? [window.weekend_from_h, window.weekend_to_h]
+    : [window.from_h, window.to_h];
+}
+
+// The night between two days, which with two programs is not symmetric:
+// it starts when the day that is ending stopped heating and finishes when
+// the day that is beginning starts. Friday 18:00 to Saturday 08:00 is
+// fourteen hours; Sunday 18:00 to Monday 10:00 is sixteen.
+function hpLastNight(now, window) {
   const start = new Date(now);
-  start.setHours(toH, 0, 0, 0);
-  if (now.getHours() < toH) start.setDate(start.getDate() - 1);
+  start.setHours(hpWindowFor(start, window)[1], 0, 0, 0);
+  if (now < start) {
+    start.setDate(start.getDate() - 1);
+    start.setHours(hpWindowFor(start, window)[1], 0, 0, 0);
+  }
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
-  end.setHours(fromH, 0, 0, 0);
+  end.setHours(hpWindowFor(end, window)[0], 0, 0, 0);
   return { start, end, open: now < end };
+}
+
+function hpHourLabel(hour) {
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+// One window or two, in words, for the legend and the note.
+function hpWindowLabel(window) {
+  const weekday = `${hpHourLabel(window.from_h)}-${hpHourLabel(window.to_h)}`;
+  if (
+    window.weekend_from_h == null ||
+    (window.weekend_from_h === window.from_h && window.weekend_to_h === window.to_h)
+  ) {
+    return weekday;
+  }
+  return (
+    `${weekday} Mon-Fri, ` +
+    `${hpHourLabel(window.weekend_from_h)}-${hpHourLabel(window.weekend_to_h)} Sat-Sun`
+  );
 }
 
 // How much of a run fell inside a span. A compressor at its lower limit
@@ -125,7 +161,6 @@ function renderHeatpumpRuns() {
   }
   card.hidden = false;
 
-  const { from_h: fromH, to_h: toH } = hpRuns.window;
   const rows = hpDayRows(hpRuns);
   const width = chartWidth(wrap);
   const narrow = width < 560;
@@ -142,12 +177,19 @@ function renderHeatpumpRuns() {
   const secondary = cssVar("--text-secondary");
   const runColor = cssVar("--series-heatpump");
 
-  // The window, drawn once behind everything as one block: it is the same
-  // hours on every row, and a band per row would read as a mark rather
-  // than as the backdrop it is.
-  let svg = `<rect x="${x(fromH)}" y="${padT}" width="${x(toH) - x(fromH)}" height="${
-    rows.length * HP_ROW_H
-  }" fill="${grid}" />`;
+  // The window, drawn per row rather than once behind everything, because
+  // it is no longer the same hours on every row. Each band is the full row
+  // height, so days on the same program still touch and a working week
+  // reads as one block with the weekend as a step out of it, instead of as
+  // seven marks.
+  let svg = rows
+    .map((row, i) => {
+      const [h0, h1] = hpWindowFor(row.day, hpRuns.window);
+      return `<rect x="${x(h0)}" y="${padT + i * HP_ROW_H}" width="${
+        x(h1) - x(h0)
+      }" height="${HP_ROW_H}" fill="${grid}" />`;
+    })
+    .join("");
 
   const ticks = narrow ? [0, 6, 12, 18, 24] : [0, 3, 6, 9, 12, 15, 18, 21, 24];
   for (const h of ticks) {
@@ -242,7 +284,7 @@ function renderHeatpumpRuns() {
   const legend = [
     { name: "Compressor running", color: "--series-heatpump" },
     {
-      name: `Window it is set to heat in (${String(fromH).padStart(2, "0")}:00-${String(toH).padStart(2, "0")}:00)`,
+      name: `Window it is set to heat in (${hpWindowLabel(hpRuns.window)})`,
       color: "--gridline",
     },
   ];
@@ -288,18 +330,19 @@ function hpAttachTooltip(wrap) {
 function hpRenderNote() {
   const note = el("heatpumpRunsNote");
   const verdict = el("heatpumpRunsVerdict");
-  const { from_h: fromH, to_h: toH } = hpRuns.window;
   if (note) {
     note.textContent =
       `Measured on the pump's own feed. Its controller cannot be read at all - the ` +
       `gateway speaks no Modbus - so the clamp meter is the only witness to what it ` +
       `decided. A bar is the compressor drawing more than ${fmt(hpRuns.threshold_kw, 1)} kW; ` +
       `below that the machine is idling (its controller alone draws 35 W) or just ` +
-      `circulating water.`;
+      `circulating water. The shaded band is the time program the controller ` +
+      `is set to, ${hpWindowLabel(hpRuns.window)}, which is what the runs are ` +
+      `compared against and not something this service can enforce.`;
   }
   if (!verdict) return;
 
-  const night = hpLastNight(new Date(), fromH, toH);
+  const night = hpLastNight(new Date(), hpRuns.window);
   let kwh = 0;
   let count = 0;
   for (const run of hpRuns.runs) {

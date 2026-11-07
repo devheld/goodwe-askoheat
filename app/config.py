@@ -261,8 +261,18 @@ class Settings:
     # circulation pump on its own 0.13-0.14 kW, and the compressor
     # 1.10-1.21 kW. So it separates "heating" from "idling" and from
     # "circulating", which is the distinction the runs are about.
+    #
+    # Two windows, because the controller holds two time programs: a later
+    # start on working days than at the weekend. One pair could only be set
+    # to the earlier of the two, which would read every working morning
+    # before it as a breach, or to the later one, which would excuse every
+    # weekend morning. The weekend pair falls back to the weekday pair when
+    # it is not set, so a single-program house configures one window as
+    # before.
     heatpump_window_from_h: int
     heatpump_window_to_h: int
+    heatpump_weekend_window_from_h: int
+    heatpump_weekend_window_to_h: int
     heatpump_run_kw: float
 
     # The heat pump's electricity expressed in the unit this house used to
@@ -606,6 +616,14 @@ def load_settings() -> Settings:
         heatpump_max_kw=float(os.environ.get("HEATPUMP_MAX_KW", "0")),
         heatpump_window_from_h=int(os.environ.get("HEATPUMP_WINDOW_FROM_H", "8")),
         heatpump_window_to_h=int(os.environ.get("HEATPUMP_WINDOW_TO_H", "18")),
+        heatpump_weekend_window_from_h=int(
+            os.environ.get("HEATPUMP_WEEKEND_WINDOW_FROM_H")
+            or os.environ.get("HEATPUMP_WINDOW_FROM_H", "8")
+        ),
+        heatpump_weekend_window_to_h=int(
+            os.environ.get("HEATPUMP_WEEKEND_WINDOW_TO_H")
+            or os.environ.get("HEATPUMP_WINDOW_TO_H", "18")
+        ),
         heatpump_run_kw=float(os.environ.get("HEATPUMP_RUN_KW", "0.5")),
         heatpump_spf=float(os.environ.get("HEATPUMP_SPF", "4.0")),
         oil_kwh_per_litre=float(os.environ.get("OIL_KWH_PER_LITRE", "10.0")),

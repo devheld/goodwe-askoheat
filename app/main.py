@@ -67,6 +67,10 @@ async def lifespan(app: FastAPI):
             settings.heatpump_window_from_h,
             settings.heatpump_window_to_h,
         ),
+        heatpump_weekend_window=(
+            settings.heatpump_weekend_window_from_h,
+            settings.heatpump_weekend_window_to_h,
+        ),
     )
     reader = GoodWeModbusReader(
         settings.goodwe_host,

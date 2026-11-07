@@ -149,6 +149,7 @@ class HistoryStore:
         wallbox_meter_busy_kw: float = 0.1,
         heatpump_run_kw: float = 0.5,
         heatpump_window: tuple[int, int] = (8, 18),
+        heatpump_weekend_window: tuple[int, int] | None = None,
         main_fuse_a: float = 0.0,
         main_fuse_warn_pct: float = 80.0,
     ) -> None:
@@ -174,6 +175,9 @@ class HistoryStore:
         # against. See heatpump_runs.
         self._heatpump_run_kw = heatpump_run_kw
         self._heatpump_window = heatpump_window
+        # Saturday and Sunday run a program of their own. Absent, they are
+        # the working week's.
+        self._heatpump_weekend_window = heatpump_weekend_window or heatpump_window
         self._main_fuse_a = main_fuse_a
         self._main_fuse_warn_pct = main_fuse_warn_pct
         self._battery_full_soc_pct = battery_full_soc_pct
@@ -1313,6 +1317,7 @@ class HistoryStore:
         a wall clock and so is the night somebody sleeps through.
         """
         from_h, to_h = self._heatpump_window
+        we_from_h, we_to_h = self._heatpump_weekend_window
         sql = """
             SELECT timestamp, heatpump_kw,
                    (julianday(timestamp)
@@ -1340,7 +1345,12 @@ class HistoryStore:
             measured_h += hours
             # Local hour, because that is what the time program is set in.
             local = ts.astimezone()
-            inside = from_h <= local.hour < to_h
+            # And the local weekday, because the program differs: a run at
+            # nine is a breach on Tuesday and expected on Sunday.
+            day_from, day_to = (
+                (we_from_h, we_to_h) if local.weekday() >= 5 else (from_h, to_h)
+            )
+            inside = day_from <= local.hour < day_to
 
             if kw < self._heatpump_run_kw:
                 # Everything the machine draws while not compressing: the
@@ -1389,7 +1399,12 @@ class HistoryStore:
 
         runs.reverse()
         return {
-            "window": {"from_h": from_h, "to_h": to_h},
+            "window": {
+                "from_h": from_h,
+                "to_h": to_h,
+                "weekend_from_h": we_from_h,
+                "weekend_to_h": we_to_h,
+            },
             "threshold_kw": self._heatpump_run_kw,
             # The span the clamp actually covers. An empty stretch inside it
             # is the pump standing still; an empty stretch outside it is
