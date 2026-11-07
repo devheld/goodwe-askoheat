@@ -190,6 +190,211 @@ function renderSources(src) {
   }
 }
 
+// The car against the one it replaces. Two conversions sit between the
+// measurement and the answer - how far a kWh goes, and what a petrol car
+// burns - so both are printed next to the result rather than buried in a
+// config file.
+//
+// A line and not twelve bars: the quantity is continuous in the season
+// and the shape is the message, a trough in January and a peak in July.
+// One series, so no legend - the title names it - and the months that
+// are actually in the record carry a dot and their own label, which is
+// the direct labelling that keeps the modelled curve and the measured
+// months apart without a second colour.
+const MONTH_LABELS = "JFMAMJJASOND".split("");
+
+function renderIce(ice) {
+  const card = document.getElementById("iceCard");
+  if (!card) return;
+  if (!ice || !ice.km) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const verdict = document.getElementById("iceVerdict");
+  if (verdict) {
+    verdict.innerHTML =
+      `<strong>${fmt(ice.km, 0)} km</strong> out of the charging so far. ` +
+      `A petrol car at ${fmt(ice.l_per_100km, 1)} l/100 km would have burnt ` +
+      `<strong>${fmt(ice.litres, 1)} litres</strong> for them - ` +
+      `${money(ice.fuel_chf)} at ${fmt(ice.fuel_chf_per_litre, 2)} a litre. ` +
+      `The electricity that had to be bought for the same kilometres cost ` +
+      `${money(ice.power_chf)}, so <strong>${money(ice.saved_chf)} saved</strong>.`;
+  }
+
+  // The curve.
+  const chart = document.getElementById("iceChart");
+  const width = chartWidth(chart);
+  const height = 150;
+  const padL = 34;
+  const padR = 12;
+  const padT = 14;
+  const padB = 22;
+  chart.innerHTML = "";
+  const svg = newSvg(chart, width, height);
+  const curve = ice.curve || [];
+  const byMonth = new Map(
+    (ice.by_month || []).map((m) => [parseInt(m.month.slice(5, 7), 10) - 1, m])
+  );
+
+  const x = d3
+    .scalePoint()
+    .domain(d3.range(12))
+    .range([padL, width - padR]);
+  // The axis does not start at zero, and the note says so: from zero the
+  // whole seasonal swing would be four pixels of a bar nobody can read.
+  const lo = d3.min(curve) * 0.94;
+  const hi = d3.max(curve) * 1.04;
+  const y = d3.scaleLinear().domain([lo, hi]).range([height - padB, padT]);
+
+  for (const tick of y.ticks(3)) {
+    svg
+      .append("line")
+      .attr("x1", padL)
+      .attr("x2", width - padR)
+      .attr("y1", y(tick))
+      .attr("y2", y(tick))
+      .attr("stroke", cssVar("--gridline"))
+      .attr("stroke-width", 1);
+    svg
+      .append("text")
+      .attr("x", padL - 6)
+      .attr("y", y(tick) + 3)
+      .attr("text-anchor", "end")
+      .attr("font-size", 10)
+      .attr("fill", cssVar("--text-muted"))
+      .text(fmt(tick, 1));
+  }
+
+  svg
+    .append("path")
+    .datum(curve)
+    .attr("fill", "none")
+    .attr("stroke", cssVar("--series-wallbox"))
+    .attr("stroke-width", 2)
+    .attr("stroke-linejoin", "round")
+    .attr(
+      "d",
+      d3
+        .line()
+        .x((d, i) => x(i))
+        .y((d) => y(d))
+        .curve(d3.curveMonotoneX)
+    );
+
+  curve.forEach((value, i) => {
+    const month = byMonth.get(i);
+    svg
+      .append("text")
+      .attr("x", x(i))
+      .attr("y", height - 6)
+      .attr("text-anchor", "middle")
+      .attr("font-size", 10)
+      .attr("fill", month ? cssVar("--text-primary") : cssVar("--text-muted"))
+      .attr("font-weight", month ? 600 : 400)
+      .text(MONTH_LABELS[i]);
+    if (month) {
+      svg
+        .append("circle")
+        .attr("cx", x(i))
+        .attr("cy", y(value))
+        .attr("r", 4)
+        .attr("fill", cssVar("--series-wallbox"))
+        .attr("stroke", cssVar("--surface-1"))
+        .attr("stroke-width", 2);
+      svg
+        .append("text")
+        .attr("x", x(i))
+        .attr("y", y(value) - 10)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 10)
+        .attr("fill", cssVar("--text-secondary"))
+        .text(`${fmt(value, 1)} km/kWh`);
+    }
+    // A hit target the width of the month, not the width of the dot.
+    svg
+      .append("rect")
+      .attr("x", x(i) - (width - padL - padR) / 24)
+      .attr("y", padT)
+      .attr("width", (width - padL - padR) / 12)
+      .attr("height", height - padT - padB)
+      .attr("fill", "transparent")
+      .on("mousemove", (event) =>
+        showTip(
+          tipRows(
+            new Date(2026, i, 1).toLocaleDateString("en-GB", { month: "long" }),
+            [
+              { color: "--series-wallbox", label: "Range", value: `${fmt(value, 2)} km/kWh` },
+              month
+                ? { label: "Charged", value: `${fmt(month.kwh, 1)} kWh = ${fmt(month.km, 0)} km` }
+                : { label: "Charged", value: "nothing recorded" },
+            ]
+          ),
+          event
+        )
+      )
+      .on("mouseleave", hideTip);
+  });
+
+  const table = document.getElementById("iceTable");
+  if (table) {
+    table.innerHTML = `
+      <table class="data">
+        <thead><tr>
+          <th>Month</th><th>km/kWh</th><th>Charged</th><th>Distance</th>
+          <th>Petrol</th><th>Petrol cost</th><th>Power bought</th>
+        </tr></thead>
+        <tbody>${(ice.by_month || [])
+          .map(
+            (m) => `<tr>
+              <td>${new Date(`${m.month}-01T12:00:00`).toLocaleDateString("en-GB", {
+                month: "long",
+                year: "numeric",
+              })}</td>
+              <td>${fmt(m.km_per_kwh, 2)}</td>
+              <td>${fmt(m.kwh, 1)} kWh</td>
+              <td>${fmt(m.km, 0)} km</td>
+              <td>${fmt(m.litres, 1)} l</td>
+              <td>${money(m.fuel_chf)}</td>
+              <td>${money(m.power_chf)}</td>
+            </tr>`
+          )
+          .join("")}
+          <tr>
+            <td><strong>Total</strong></td>
+            <td>-</td>
+            <td><strong>-</strong></td>
+            <td><strong>${fmt(ice.km, 0)} km</strong></td>
+            <td><strong>${fmt(ice.litres, 1)} l</strong></td>
+            <td><strong>${money(ice.fuel_chf)}</strong></td>
+            <td><strong>${money(ice.power_chf)}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="chart-note">
+        The kilowatt-hours are measured; everything after them rests on two
+        settings. <code>EV_KM_PER_KWH</code> is ${fmt(ice.km_per_kwh, 1)} km
+        per kWh <em>at the wallbox</em> as a yearly average - the car's own
+        display counts what reached the battery, which is about a tenth
+        more optimistic - and the month-by-month spread comes from this
+        car's published consumption at -10&nbsp;°C and at 23&nbsp;°C read
+        against the local monthly mean temperatures, 18% between January
+        and July. Owner logs for the same car differ by 16% between summer
+        and winter tyres, so the model is in the right place; it is still a
+        floor, because a commute happens at the cold end of the day and a
+        short winter trip pays for heating the cabin over fewer kilometres.
+        <code>ICE_L_PER_100KM</code> is ${fmt(ice.l_per_100km, 1)} l/100 km,
+        and it carries no season of its own although a cold engine also
+        drinks more - which makes this the conservative comparison. The
+        y-axis does not start at zero. This is not in the payback on the
+        energy page and must not be added to it: that one is measured
+        against charging the same car at a public charger, and a car cannot
+        be compared with two different alternatives at once.
+      </p>`;
+  }
+}
+
 function renderSessions(payload) {
   const container = document.getElementById("chartSessions");
   const table = document.getElementById("tableSessions");
@@ -467,6 +672,7 @@ async function loadSessions() {
     lastPayloads = { runs: sessions, compare: crosscheck };
     renderSessions(sessions);
     renderSources(sessions.sources);
+    renderIce(sessions.ice);
     renderEvents(events);
     renderCrosscheck(crosscheck);
   } catch (err) {
@@ -485,6 +691,7 @@ onViewportResize(() => {
   if (!lastPayloads) return;
   renderSessions(lastPayloads.runs);
   renderSources(lastPayloads.runs.sources);
+  renderIce(lastPayloads.runs.ice);
   renderCrosscheck(lastPayloads.compare);
 });
 

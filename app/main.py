@@ -486,6 +486,80 @@ async def energy(period: str = Query("today")) -> dict:
     return payload
 
 
+def _ev_vs_ice(by_day: list[dict]) -> dict | None:
+    """Kilometres out of kilowatt-hours, and what they would have cost in
+    petrol.
+
+    Two conversions and both are stated: how far a kWh goes in the month
+    it was charged in (ev_monthly_efficiency, derived from the car's own
+    published cold and mild consumption against the local climate
+    normals), and what the petrol car it replaces burns per 100 km. The
+    kWh themselves are measured; everything after them is arithmetic on
+    two settings, which is why the card prints both.
+
+    The petrol side carries no season of its own, although a combustion
+    engine also uses more in the cold - a cold start on a short trip
+    especially. Leaving that out makes this comparison the conservative
+    one, which is the direction to err in.
+
+    Returns None when either conversion is unset: a distance nobody
+    measured is worse than no distance at all.
+    """
+    if settings.ev_km_per_kwh <= 0 or settings.ice_l_per_100km <= 0:
+        return None
+
+    months: dict[str, dict] = {}
+    for row in by_day:
+        day = _bucket_day(row["day"])
+        factor = settings.ev_monthly_efficiency[day.month - 1]
+        km = (row["kwh"] or 0.0) * settings.ev_km_per_kwh * factor
+        litres = km / 100.0 * settings.ice_l_per_100km
+        rate, _ = _rate_at(day)
+        bucket = months.setdefault(
+            day.strftime("%Y-%m"),
+            {
+                "month": day.strftime("%Y-%m"),
+                "km_per_kwh": round(settings.ev_km_per_kwh * factor, 2),
+                "kwh": 0.0,
+                "km": 0.0,
+                "litres": 0.0,
+                "fuel_chf": 0.0,
+                # What the kilometres actually cost: only the share that
+                # had to be bought. The rest came off the roof, and the
+                # solar stream has already been paid for it.
+                "power_chf": 0.0,
+            },
+        )
+        bucket["kwh"] += row["kwh"] or 0.0
+        bucket["km"] += km
+        bucket["litres"] += litres
+        bucket["fuel_chf"] += litres * settings.fuel_chf_per_litre
+        bucket["power_chf"] += (row["grid"] or 0.0) * rate
+
+    ordered = [
+        {k: (round(v, 2) if isinstance(v, float) else v) for k, v in month.items()}
+        for month in sorted(months.values(), key=lambda m: m["month"])
+    ]
+    fuel = sum(m["fuel_chf"] for m in ordered)
+    power = sum(m["power_chf"] for m in ordered)
+    return {
+        "km": round(sum(m["km"] for m in ordered), 1),
+        "litres": round(sum(m["litres"] for m in ordered), 1),
+        "fuel_chf": round(fuel, 2),
+        "power_chf": round(power, 2),
+        "saved_chf": round(fuel - power, 2),
+        "km_per_kwh": settings.ev_km_per_kwh,
+        "l_per_100km": settings.ice_l_per_100km,
+        "fuel_chf_per_litre": settings.fuel_chf_per_litre,
+        # The whole year's curve, so the season is visible and not only
+        # the two months that happen to be in the record.
+        "curve": [
+            round(settings.ev_km_per_kwh * f, 2) for f in settings.ev_monthly_efficiency
+        ],
+        "by_month": ordered,
+    }
+
+
 def _payback(key: str, name: str, net: float, members: list[dict]) -> dict:
     """One investment against the savings that actually came from it.
 
@@ -770,6 +844,7 @@ async def wallbox_sessions(days: int = Query(30, ge=1, le=366)) -> dict:
     assert store is not None
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     sessions = store.wallbox_sessions(since)
+    sources = store.wallbox_energy_split(since)
     return {
         "days": days,
         "sessions": sessions,
@@ -785,11 +860,12 @@ async def wallbox_sessions(days: int = Query(30, ge=1, le=366)) -> dict:
         # prices ride along so the page can say what the mix is worth
         # without fetching the whole finance payload.
         "sources": {
-            **store.wallbox_energy_split(since),
+            **sources,
             "public_chf_per_kwh": settings.ev_public_chf_per_kwh,
             "import_chf_per_kwh": _rate_at(date.today())[0],
             "currency": "CHF",
         },
+        "ice": _ev_vs_ice(sources["by_day"]),
     }
 
 

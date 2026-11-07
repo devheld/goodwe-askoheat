@@ -70,6 +70,57 @@ def _tariffs() -> tuple[tuple[int, float, float], ...]:
     return tuple(sorted(entries, key=lambda e: e[0]))
 
 
+# How far a kilowatt-hour goes, month by month, as a multiple of the
+# year's average. Derived rather than invented, from two measurements and
+# a climate table:
+#
+#   * EV Database's figures for this car (Smart EQ fortwo): 196 Wh/km
+#     combined at -10 C with the heating on, 145 Wh/km at 23 C with the
+#     air conditioning off. Linear between the two gives 1.55 Wh/km per
+#     kelvin, and nothing is added above 23 C - the mild figure already
+#     has the cooling off, and cold costs far more than heat does.
+#   * MeteoSwiss monthly mean temperatures for Zurich, 1991-2020 normals:
+#     0.9, 1.8, 5.8, 9.6, 13.6, 17.1, 19.0, 18.6, 14.4, 10.0, 4.9, 1.7 C.
+#
+# That comes to 18.5% between July and January, which is the number worth
+# sanity-checking: owner logs on Spritmonitor for the same car show 11.5
+# kWh/100km on summer tyres against 13.4 on winter tyres, 16% apart, so
+# the model lands in the right place rather than at the -10 C worst case
+# that gets quoted.
+#
+# It is a floor, for two reasons. Monthly means are not driving
+# temperatures - the commute happens at the cold end of the day - and a
+# short trip in winter pays the cabin heating over fewer kilometres.
+# Replace the list with measured numbers once there are a winter's worth.
+DEFAULT_EV_MONTHLY_EFFICIENCY = (
+    0.920, 0.927, 0.961, 0.995, 1.033, 1.069,
+    1.090, 1.086, 1.041, 0.998, 0.953, 0.926,
+)
+
+
+def _ev_monthly_efficiency() -> tuple[float, ...]:
+    """Twelve factors, January first, normalised to average 1.
+
+    Normalised rather than taken as given, so that ev_km_per_kwh always
+    means the same thing - the year's average - whatever list is in
+    front of it.
+    """
+    raw = os.environ.get("EV_MONTHLY_EFFICIENCY", "").strip()
+    values = DEFAULT_EV_MONTHLY_EFFICIENCY
+    if raw:
+        try:
+            parsed = tuple(float(part) for part in raw.split(","))
+            if len(parsed) != 12 or min(parsed) <= 0:
+                raise ValueError(raw)
+            values = parsed
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "EV_MONTHLY_EFFICIENCY: need 12 positive numbers, ignoring %r", raw
+            )
+    total = sum(values)
+    return tuple(v * 12.0 / total for v in values)
+
+
 def _finance_extra_streams() -> tuple[str, ...]:
     """Which savings belong to investment_extra_chf and not to the invoice.
 
@@ -231,6 +282,26 @@ class Settings:
     # right. The split is reported because it says something about the
     # installation, not because the money depends on it.
     ev_public_chf_per_kwh: float
+
+    # The car against the one it would otherwise be. Each figure is one
+    # step from a measurement: the clamp says how many kWh went into the
+    # car, ev_km_per_kwh turns those into kilometres, and the two petrol
+    # settings turn kilometres into litres and francs. Zero on either
+    # ev_km_per_kwh or ice_l_per_100km hides the comparison rather than
+    # printing a distance nobody measured.
+    #
+    # ev_km_per_kwh: the year's average, measured at the wallbox and not
+    #   on the dashboard - the car's own display counts what reached the
+    #   battery, which is some 10% less than what came out of the wall.
+    # ev_monthly_efficiency: how that average is spread over the year.
+    #   See DEFAULT_EV_MONTHLY_EFFICIENCY.
+    # ice_l_per_100km: what the petrol car it replaces actually used, not
+    #   its type approval. Owner logs for a Smart fortwo 453 with the
+    #   0.9 turbo run 5.0 to 6.5, most of them near 5.7.
+    ev_km_per_kwh: float
+    ev_monthly_efficiency: tuple[float, ...]
+    ice_l_per_100km: float
+    fuel_chf_per_litre: float
 
     # What the installation cost, and what counts as earning it back. These
     # amounts live in .env and never in the repository: an invoice is the
@@ -500,6 +571,10 @@ def load_settings() -> Settings:
         oil_boiler_efficiency=float(os.environ.get("OIL_BOILER_EFFICIENCY", "0.85")),
         oil_price_chf_per_litre=float(os.environ.get("OIL_PRICE_CHF_PER_LITRE", "1.78")),
         ev_public_chf_per_kwh=float(os.environ.get("EV_PUBLIC_CHF_PER_KWH", "0")),
+        ev_km_per_kwh=float(os.environ.get("EV_KM_PER_KWH", "0")),
+        ev_monthly_efficiency=_ev_monthly_efficiency(),
+        ice_l_per_100km=float(os.environ.get("ICE_L_PER_100KM", "0")),
+        fuel_chf_per_litre=float(os.environ.get("FUEL_CHF_PER_LITRE", "2.05")),
         investment_chf=float(os.environ.get("INVESTMENT_CHF", "0")),
         investment_extra_chf=float(os.environ.get("INVESTMENT_EXTRA_CHF", "0")),
         investment_extra_label=os.environ.get(
