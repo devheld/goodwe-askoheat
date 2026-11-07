@@ -1053,18 +1053,34 @@ conversions next to the answer instead of hiding them in a config file.
 How far a kWh goes depends on the month, and the factors are derived
 rather than guessed:
 
-* EV Database's figures for this car, 196 Wh/km combined at -10 °C with
-  the heating on and 145 Wh/km at 23 °C with the cooling off. Linear
-  between the two is 1.55 Wh/km per kelvin, and nothing is added above
-  23 °C - cold costs far more than heat.
+* EV Database's figures for this car - a Smart #5 with one motor -
+  238 Wh/km combined at -10 °C with the heating on and 179 Wh/km at
+  23 °C with the cooling off. Linear between the two is 1.79 Wh/km per
+  kelvin, and nothing is added above 23 °C - cold costs far more than
+  heat.
 * MeteoSwiss monthly mean temperatures for Zurich, 1991-2020 normals.
 
-That gives 4.6 km/kWh in January against 5.5 in July - 18% apart, where
-the figure usually quoted is the -10 °C worst case of 35%. The sanity
-check: owner logs for the same car on Spritmonitor show 11.5 kWh/100km
-on summer tyres against 13.4 on winter tyres, 16% apart. The model lands
-between the two, which is where a Swiss winter actually is - January's
-mean here is +0.9 °C, not -10.
+That gives 4.16 km/kWh in January against 4.88 in July - 17% apart,
+where the figure usually quoted is the -10 °C worst case of 28%. The
+sanity check: owner logs for a smaller EV show 16% between summer and
+winter tyres. The model lands in the same place, which is where a Swiss
+winter actually is - January's mean here is +0.9 °C, not -10.
+
+Two numbers had to be separated to get this right. The car says 5
+km/kWh and EV Database puts its yearly average at 202 Wh/km, which is
+4.94 - so the car's figure is energy out of the battery, and the clamp
+measures energy into the charger. `EV_CHARGING_LOSS_PCT` is the gap,
+and the curve is drawn wall-side at 4.50 km/kWh, because that is the
+side the money is on.
+
+Scaling it to a year is done on kilometres and not on kilowatt-hours.
+The same journey needs 15% less energy in July than in January, so
+holding the kWh constant would bake whatever weather the measured
+window happened to have into all twelve months. The twelve are the
+twelve ahead, each priced at the tariff that will apply to it. Two
+inputs stay at their measured value rather than being modelled - the
+share that has to be bought, which summer will improve, and the petrol
+side's lack of a season - and both of those errors point the same way.
 
 It is still a floor. A monthly mean is not a driving temperature, and a
 commute happens at the cold end of the day; and a short winter trip pays
