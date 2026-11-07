@@ -1088,6 +1088,18 @@ for heating the cabin over fewer kilometres than a long one. The twelve
 factors are `EV_MONTHLY_EFFICIENCY`, to be replaced with measured ones
 once there is a winter's worth of them.
 
+The one input here that is neither measured nor stable is the pump
+price, and it was quietly the weakest number on the card: a single
+figure with no date on it, multiplied by a year's litres. Bleifrei 95
+went 1.87 in July 2026, past 2.00 in August, 2.13 in October and 1.99
+on 6 November - 14% inside four months. So `FUEL_CHF_PER_LITRE` now
+travels with `FUEL_PRICE_AS_OF` and an optional `FUEL_PRICE_RANGE`, the
+card quotes the band rather than a point, and it states the
+sensitivity: every 10 rappen on the litre is about 120 francs a year.
+Nothing fetches the price. Scraping a motoring club's page hourly to
+refine a twelve-month estimate would be precision theatre, and the
+estimate's real error bar is the fortnight of driving underneath it.
+
 Two things this deliberately does not do. The petrol side carries no
 season, although a cold engine also drinks more - which makes the
 comparison the conservative one. And it is not a finance stream: the
