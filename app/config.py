@@ -74,27 +74,28 @@ def _tariffs() -> tuple[tuple[int, float, float], ...]:
 # year's average. Derived rather than invented, from two measurements and
 # a climate table:
 #
-#   * EV Database's figures for this car (Smart EQ fortwo): 196 Wh/km
-#     combined at -10 C with the heating on, 145 Wh/km at 23 C with the
-#     air conditioning off. Linear between the two gives 1.55 Wh/km per
-#     kelvin, and nothing is added above 23 C - the mild figure already
-#     has the cooling off, and cold costs far more than heat does.
+#   * EV Database's figures for this car (Smart #5 Premium, rear-wheel
+#     drive, one motor): 238 Wh/km combined at -10 C with the heating on,
+#     179 Wh/km at 23 C with the air conditioning off. Linear between the
+#     two gives 1.79 Wh/km per kelvin, and nothing is added above 23 C -
+#     the mild figure already has the cooling off, and cold costs far
+#     more than heat does.
 #   * MeteoSwiss monthly mean temperatures for Zurich, 1991-2020 normals:
 #     0.9, 1.8, 5.8, 9.6, 13.6, 17.1, 19.0, 18.6, 14.4, 10.0, 4.9, 1.7 C.
 #
-# That comes to 18.5% between July and January, which is the number worth
-# sanity-checking: owner logs on Spritmonitor for the same car show 11.5
-# kWh/100km on summer tyres against 13.4 on winter tyres, 16% apart, so
-# the model lands in the right place rather than at the -10 C worst case
-# that gets quoted.
+# That comes to 17.4% between July and January, which is the number worth
+# sanity-checking: owner logs on Spritmonitor for a smaller EV show 16%
+# between summer and winter tyres, so the model lands in the right place
+# rather than at the -10 C worst case that usually gets quoted. January's
+# mean here is +0.9 C, not -10.
 #
 # It is a floor, for two reasons. Monthly means are not driving
 # temperatures - the commute happens at the cold end of the day - and a
 # short trip in winter pays the cabin heating over fewer kilometres.
 # Replace the list with measured numbers once there are a winter's worth.
 DEFAULT_EV_MONTHLY_EFFICIENCY = (
-    0.920, 0.927, 0.961, 0.995, 1.033, 1.069,
-    1.090, 1.086, 1.041, 0.998, 0.953, 0.926,
+    0.924, 0.931, 0.963, 0.995, 1.031, 1.066,
+    1.085, 1.081, 1.039, 0.999, 0.956, 0.930,
 )
 
 
@@ -290,15 +291,21 @@ class Settings:
     # ev_km_per_kwh or ice_l_per_100km hides the comparison rather than
     # printing a distance nobody measured.
     #
-    # ev_km_per_kwh: the year's average, measured at the wallbox and not
-    #   on the dashboard - the car's own display counts what reached the
-    #   battery, which is some 10% less than what came out of the wall.
-    # ev_monthly_efficiency: how that average is spread over the year.
+    # ev_km_per_kwh: the year's average AS THE CAR REPORTS IT, which is
+    #   energy out of the battery. The clamp measures energy into the
+    #   wallbox, and the difference between the two is real: charging
+    #   losses in the onboard charger, the cooling and the cells.
+    # ev_charging_loss_pct: that difference. 10% is typical for AC
+    #   charging and is the conservative end, since a smaller loss would
+    #   only make the car look better. Worth replacing with a measured
+    #   figure: odometer against the clamp's kWh over a few weeks.
+    # ev_monthly_efficiency: how the average is spread over the year.
     #   See DEFAULT_EV_MONTHLY_EFFICIENCY.
     # ice_l_per_100km: what the petrol car it replaces actually used, not
-    #   its type approval. Owner logs for a Smart fortwo 453 with the
-    #   0.9 turbo run 5.0 to 6.5, most of them near 5.7.
+    #   its type approval. A petrol SUV of the same size runs 9 to 11 in
+    #   owner logs, so 8.5 is the cautious end of a fair comparison.
     ev_km_per_kwh: float
+    ev_charging_loss_pct: float
     ev_monthly_efficiency: tuple[float, ...]
     ice_l_per_100km: float
     fuel_chf_per_litre: float
@@ -572,6 +579,7 @@ def load_settings() -> Settings:
         oil_price_chf_per_litre=float(os.environ.get("OIL_PRICE_CHF_PER_LITRE", "1.78")),
         ev_public_chf_per_kwh=float(os.environ.get("EV_PUBLIC_CHF_PER_KWH", "0")),
         ev_km_per_kwh=float(os.environ.get("EV_KM_PER_KWH", "0")),
+        ev_charging_loss_pct=float(os.environ.get("EV_CHARGING_LOSS_PCT", "10")),
         ev_monthly_efficiency=_ev_monthly_efficiency(),
         ice_l_per_100km=float(os.environ.get("ICE_L_PER_100KM", "0")),
         fuel_chf_per_litre=float(os.environ.get("FUEL_CHF_PER_LITRE", "2.05")),

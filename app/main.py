@@ -486,7 +486,7 @@ async def energy(period: str = Query("today")) -> dict:
     return payload
 
 
-def _ev_vs_ice(by_day: list[dict]) -> dict | None:
+def _ev_vs_ice(by_day: list[dict], window_days: float) -> dict | None:
     """Kilometres out of kilowatt-hours, and what they would have cost in
     petrol.
 
@@ -508,18 +508,25 @@ def _ev_vs_ice(by_day: list[dict]) -> dict | None:
     if settings.ev_km_per_kwh <= 0 or settings.ice_l_per_100km <= 0:
         return None
 
+    # What a kWh at the wallbox is worth in kilometres. The car's own
+    # figure counts what left the battery; the clamp counts what entered
+    # the house's side of the charger, and the charging loss is the
+    # difference. Using the dashboard number against a wall meter would
+    # claim about a tenth more distance than was driven.
+    at_the_wall = settings.ev_km_per_kwh * (1.0 - settings.ev_charging_loss_pct / 100.0)
+
     months: dict[str, dict] = {}
     for row in by_day:
         day = _bucket_day(row["day"])
         factor = settings.ev_monthly_efficiency[day.month - 1]
-        km = (row["kwh"] or 0.0) * settings.ev_km_per_kwh * factor
+        km = (row["kwh"] or 0.0) * at_the_wall * factor
         litres = km / 100.0 * settings.ice_l_per_100km
         rate, _ = _rate_at(day)
         bucket = months.setdefault(
             day.strftime("%Y-%m"),
             {
                 "month": day.strftime("%Y-%m"),
-                "km_per_kwh": round(settings.ev_km_per_kwh * factor, 2),
+                "km_per_kwh": round(at_the_wall * factor, 2),
                 "kwh": 0.0,
                 "km": 0.0,
                 "litres": 0.0,
@@ -542,6 +549,11 @@ def _ev_vs_ice(by_day: list[dict]) -> dict | None:
     ]
     fuel = sum(m["fuel_chf"] for m in ordered)
     power = sum(m["power_chf"] for m in ordered)
+    measured_kwh = sum(row["kwh"] or 0.0 for row in by_day)
+    measured_km = sum(m["km"] for m in ordered)
+    grid_share = (
+        sum(row["grid"] or 0.0 for row in by_day) / measured_kwh if measured_kwh > 0 else 0.0
+    )
     return {
         "km": round(sum(m["km"] for m in ordered), 1),
         "litres": round(sum(m["litres"] for m in ordered), 1),
@@ -553,10 +565,80 @@ def _ev_vs_ice(by_day: list[dict]) -> dict | None:
         "fuel_chf_per_litre": settings.fuel_chf_per_litre,
         # The whole year's curve, so the season is visible and not only
         # the two months that happen to be in the record.
-        "curve": [
-            round(settings.ev_km_per_kwh * f, 2) for f in settings.ev_monthly_efficiency
-        ],
+        "curve": [round(at_the_wall * f, 2) for f in settings.ev_monthly_efficiency],
         "by_month": ordered,
+        "charging_loss_pct": settings.ev_charging_loss_pct,
+        "km_per_kwh_at_wall": round(at_the_wall, 2),
+        "grid_share": round(grid_share, 4),
+        "window_days": round(window_days, 2),
+        "km_per_day": round(measured_km / window_days, 1) if window_days > 0 else None,
+        "annual": _ev_year_ahead(measured_km, window_days, grid_share, at_the_wall),
+    }
+
+
+def _ev_year_ahead(
+    measured_km: float, window_days: float, grid_share: float, at_the_wall: float
+) -> dict | None:
+    """The next twelve months at the distance measured so far.
+
+    Scaled on kilometres and not on kilowatt-hours, which is the whole
+    reason this is worth doing: the same journey needs more energy in
+    January than in July, so holding the kWh constant would bake
+    whatever weather the window happened to have into every month of the
+    year. Holding the kilometres constant is also what the household
+    says it does.
+
+    The twelve months are the twelve ahead, not a generic year, so each
+    one is priced at the tariff that will actually apply to it.
+
+    Two things are held at their measured value rather than modelled.
+    The share that has to be bought stays as it has been - in summer the
+    roof will cover more of it, so this errs low - and the petrol side
+    has no season at all, although a cold engine also drinks more. Both
+    errors point the same way, which is the safe one.
+    """
+    if window_days < 3 or measured_km <= 0:
+        return None
+    km_per_day = measured_km / window_days
+    first = date.today().replace(day=1)
+    rows = []
+    for step in range(12):
+        month = (first.month - 1 + step) % 12 + 1
+        year = first.year + (first.month - 1 + step) // 12
+        days_in_month = monthrange(year, month)[1]
+        factor = settings.ev_monthly_efficiency[month - 1]
+        km = km_per_day * days_in_month
+        kwh = km / (at_the_wall * factor)
+        litres = km / 100.0 * settings.ice_l_per_100km
+        rate, _ = _rate_at(date(year, month, 15))
+        fuel_chf = litres * settings.fuel_chf_per_litre
+        power_chf = kwh * grid_share * rate
+        rows.append(
+            {
+                "month": "%04d-%02d" % (year, month),
+                "km_per_kwh": round(at_the_wall * factor, 2),
+                "km": round(km, 0),
+                "kwh": round(kwh, 1),
+                "litres": round(litres, 1),
+                "fuel_chf": round(fuel_chf, 2),
+                "power_chf": round(power_chf, 2),
+                "saved_chf": round(fuel_chf - power_chf, 2),
+            }
+        )
+    fuel = sum(r["fuel_chf"] for r in rows)
+    power = sum(r["power_chf"] for r in rows)
+    return {
+        "from": rows[0]["month"],
+        "to": rows[-1]["month"],
+        "km_per_day": round(km_per_day, 1),
+        "km": round(sum(r["km"] for r in rows), 0),
+        "kwh": round(sum(r["kwh"] for r in rows), 0),
+        "litres": round(sum(r["litres"] for r in rows), 0),
+        "fuel_chf": round(fuel, 2),
+        "power_chf": round(power, 2),
+        "saved_chf": round(fuel - power, 2),
+        "grid_share": round(grid_share, 4),
+        "by_month": rows,
     }
 
 
@@ -865,7 +947,7 @@ async def wallbox_sessions(days: int = Query(30, ge=1, le=366)) -> dict:
             "import_chf_per_kwh": _rate_at(date.today())[0],
             "currency": "CHF",
         },
-        "ice": _ev_vs_ice(sources["by_day"]),
+        "ice": _ev_vs_ice(sources["by_day"], sources["days"]),
     }
 
 

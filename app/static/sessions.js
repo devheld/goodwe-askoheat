@@ -203,6 +203,13 @@ function renderSources(src) {
 // months apart without a second colour.
 const MONTH_LABELS = "JFMAMJJASOND".split("");
 
+function finMonthLabel(iso) {
+  return new Date(`${iso}-01T12:00:00`).toLocaleDateString("en-GB", {
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function renderIce(ice) {
   const card = document.getElementById("iceCard");
   if (!card) return;
@@ -221,6 +228,28 @@ function renderIce(ice) {
       `${money(ice.fuel_chf)} at ${fmt(ice.fuel_chf_per_litre, 2)} a litre. ` +
       `The electricity that had to be bought for the same kilometres cost ` +
       `${money(ice.power_chf)}, so <strong>${money(ice.saved_chf)} saved</strong>.`;
+  }
+
+  // The projection, directly under the measurement it is built from and
+  // never without it: twelve months of a fortnight's driving is a big
+  // multiplication, and the reader should see what got multiplied.
+  const year = document.getElementById("iceYear");
+  if (year) {
+    const a = ice.annual;
+    year.innerHTML = !a
+      ? ""
+      : `<strong>Over a year at this rate: ${money(a.saved_chf)}.</strong> ` +
+        `${fmt(a.km_per_day, 0)} km a day - the measured ${fmt(
+          ice.km,
+          0
+        )} km over ${fmt(ice.window_days, 1)} days with the wallbox - comes to ` +
+        `${fmt(a.km, 0)} km, ${fmt(a.kwh, 0)} kWh and ${fmt(a.litres, 0)} litres of ` +
+        `petrol avoided between ${finMonthLabel(a.from)} and ${finMonthLabel(a.to)}. ` +
+        `Scaled on kilometres and not on kilowatt-hours, because the same journey ` +
+        `needs ${fmt(100 * (ice.curve[0] / ice.curve[6] - 1) * -1, 0)}% less energy in ` +
+        `July than in January. The share bought from the grid is held at the ` +
+        `${fmt(100 * a.grid_share, 0)}% measured so far; in summer the roof will cover ` +
+        `more of it, so this is the low end.`;
   }
 
   // The curve.
@@ -370,7 +399,7 @@ function renderIce(ice) {
           )
           .join("")}
           <tr>
-            <td><strong>Total</strong></td>
+            <td><strong>Total measured</strong></td>
             <td>-</td>
             <td><strong>-</strong></td>
             <td><strong>${fmt(ice.km, 0)} km</strong></td>
@@ -380,19 +409,22 @@ function renderIce(ice) {
           </tr>
         </tbody>
       </table>
+      ${iceYearTable(ice)}
       <p class="chart-note">
         The kilowatt-hours are measured; everything after them rests on two
-        settings. <code>EV_KM_PER_KWH</code> is ${fmt(ice.km_per_kwh, 1)} km
-        per kWh <em>at the wallbox</em> as a yearly average - the car's own
-        display counts what reached the battery, which is about a tenth
-        more optimistic - and the month-by-month spread comes from this
-        car's published consumption at -10&nbsp;°C and at 23&nbsp;°C read
-        against the local monthly mean temperatures, 18% between January
-        and July. Owner logs for the same car differ by 16% between summer
-        and winter tyres, so the model is in the right place; it is still a
-        floor, because a commute happens at the cold end of the day and a
-        short winter trip pays for heating the cabin over fewer kilometres.
-        The curve and the dots are km per kWh.
+        settings. <code>EV_KM_PER_KWH</code> is ${fmt(ice.km_per_kwh, 1)} km per kWh
+        as the car reports it, which counts energy out of the battery;
+        the clamp counts energy into the charger, and
+        <code>EV_CHARGING_LOSS_PCT</code> of
+        ${fmt(ice.charging_loss_pct, 0)}% is the difference. The curve and
+        the dots are therefore
+        ${fmt(ice.km_per_kwh_at_wall, 2)} km per kWh <em>at the wallbox</em>
+        on the year's average, which is the figure the money rests on. The
+        month-by-month spread comes from this car's published consumption
+        at -10&nbsp;°C and at 23&nbsp;°C read against the local monthly
+        mean temperatures: 17% between January and July. It is a floor,
+        because a commute happens at the cold end of the day and a short
+        winter trip pays for heating the cabin over fewer kilometres.
         <code>ICE_L_PER_100KM</code> is ${fmt(ice.l_per_100km, 1)} l/100 km,
         and it carries no season of its own although a cold engine also
         drinks more - which makes this the conservative comparison. The
@@ -402,6 +434,50 @@ function renderIce(ice) {
         be compared with two different alternatives at once.
       </p>`;
   }
+}
+
+// The twelve months ahead, kept in its own table under the measured
+// one so that a projection is never mistaken for a reading.
+function iceYearTable(ice) {
+  const a = ice.annual;
+  if (!a) return "";
+  return `
+    <p class="chart-note" style="margin-top:14px">
+      <strong>Projected over the next twelve months</strong> at
+      ${fmt(a.km_per_day, 0)} km a day, each month at its own range and its own
+      tariff. Not a measurement.
+    </p>
+    <table class="data">
+      <thead><tr>
+        <th>Month</th><th>km/kWh</th><th>Distance</th><th>Energy</th>
+        <th>Petrol</th><th>Petrol cost</th><th>Power bought</th><th>Saved</th>
+      </tr></thead>
+      <tbody>${a.by_month
+        .map(
+          (m) => `<tr>
+            <td>${finMonthLabel(m.month)}</td>
+            <td>${fmt(m.km_per_kwh, 2)}</td>
+            <td>${fmt(m.km, 0)} km</td>
+            <td>${fmt(m.kwh, 0)} kWh</td>
+            <td>${fmt(m.litres, 0)} l</td>
+            <td>${money(m.fuel_chf)}</td>
+            <td>${money(m.power_chf)}</td>
+            <td>${money(m.saved_chf)}</td>
+          </tr>`
+        )
+        .join("")}
+        <tr>
+          <td><strong>Year</strong></td>
+          <td>-</td>
+          <td><strong>${fmt(a.km, 0)} km</strong></td>
+          <td><strong>${fmt(a.kwh, 0)} kWh</strong></td>
+          <td><strong>${fmt(a.litres, 0)} l</strong></td>
+          <td><strong>${money(a.fuel_chf)}</strong></td>
+          <td><strong>${money(a.power_chf)}</strong></td>
+          <td><strong>${money(a.saved_chf)}</strong></td>
+        </tr>
+      </tbody>
+    </table>`;
 }
 
 function renderSessions(payload) {
