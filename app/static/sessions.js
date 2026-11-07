@@ -203,6 +203,13 @@ function renderSources(src) {
 // months apart without a second colour.
 const MONTH_LABELS = "JFMAMJJASOND".split("");
 
+function finDateLabel(iso) {
+  const when = new Date(`${iso}T12:00:00`);
+  return Number.isNaN(when.getTime())
+    ? iso
+    : when.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
+
 function finMonthLabel(iso) {
   return new Date(`${iso}-01T12:00:00`).toLocaleDateString("en-GB", {
     month: "short",
@@ -238,7 +245,12 @@ function renderIce(ice) {
     const a = ice.annual;
     year.innerHTML = !a
       ? ""
-      : `<strong>Over a year at this rate: ${money(a.saved_chf)}.</strong> ` +
+      : `<strong>Over a year at this rate: ${money(a.saved_chf)}` +
+        (a.saved_low && a.saved_high
+          ? `, between ${money(a.saved_low, 0)} and ${money(a.saved_high, 0)} over the ` +
+            `range the pump price has been in`
+          : "") +
+        `.</strong> ` +
         `${fmt(a.km_per_day, 0)} km a day - the measured ${fmt(
           ice.km,
           0
@@ -427,8 +439,22 @@ function renderIce(ice) {
         winter trip pays for heating the cabin over fewer kilometres.
         <code>ICE_L_PER_100KM</code> is ${fmt(ice.l_per_100km, 1)} l/100 km,
         and it carries no season of its own although a cold engine also
-        drinks more - which makes this the conservative comparison. The
-        y-axis does not start at zero. This is not in the payback on the
+        drinks more - which makes this the conservative comparison.
+        <strong>The pump price is a setting and not a feed</strong>:
+        ${fmt(ice.fuel_chf_per_litre, 2)} a litre${
+          ice.fuel_price_as_of ? `, last checked ${finDateLabel(ice.fuel_price_as_of)}` : ""
+        }${
+          ice.fuel_price_range
+            ? ` against a range of ${fmt(ice.fuel_price_range[0], 2)} to ${fmt(
+                ice.fuel_price_range[1],
+                2
+              )} over the past months`
+            : ""
+        }. Nothing here fetches it, and nothing could usefully forecast it${
+          ice.annual
+            ? ` - every 10 rappen on the litre is ${money(ice.annual.chf_per_10rp, 0)} a year`
+            : ""
+        }. The y-axis does not start at zero. This is not in the payback on the
         energy page and must not be added to it: that one is measured
         against charging the same car at a public charger, and a car cannot
         be compared with two different alternatives at once.

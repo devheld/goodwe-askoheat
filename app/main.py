@@ -563,6 +563,13 @@ def _ev_vs_ice(by_day: list[dict], window_days: float) -> dict | None:
         "km_per_kwh": settings.ev_km_per_kwh,
         "l_per_100km": settings.ice_l_per_100km,
         "fuel_chf_per_litre": settings.fuel_chf_per_litre,
+        # A price is not a measurement and this one moved 14% in four
+        # months, so it travels with the date it was looked up and the
+        # band it has been in.
+        "fuel_price_as_of": settings.fuel_price_as_of,
+        "fuel_price_range": list(settings.fuel_price_range)
+        if settings.fuel_price_range
+        else None,
         # The whole year's curve, so the season is visible and not only
         # the two months that happen to be in the record.
         "curve": [round(at_the_wall * f, 2) for f in settings.ev_monthly_efficiency],
@@ -638,6 +645,24 @@ def _ev_year_ahead(
         "power_chf": round(power, 2),
         "saved_chf": round(fuel - power, 2),
         "grid_share": round(grid_share, 4),
+        # What the whole projection does if the pump price moves, which
+        # it will: the petrol side is litres times a number nobody can
+        # forecast, so the sensitivity is quoted rather than hidden.
+        "chf_per_10rp": round(sum(r["litres"] for r in rows) * 0.10, 0),
+        "saved_low": (
+            round(
+                sum(r["litres"] for r in rows) * settings.fuel_price_range[0] - power, 0
+            )
+            if settings.fuel_price_range
+            else None
+        ),
+        "saved_high": (
+            round(
+                sum(r["litres"] for r in rows) * settings.fuel_price_range[1] - power, 0
+            )
+            if settings.fuel_price_range
+            else None
+        ),
         "by_month": rows,
     }
 

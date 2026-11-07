@@ -99,6 +99,27 @@ DEFAULT_EV_MONTHLY_EFFICIENCY = (
 )
 
 
+def _fuel_price_range() -> tuple[float, float] | None:
+    """The low and high the pump price has actually been, as `low,high`.
+
+    A yearly projection multiplied by a single day's pump price reads
+    as more certain than it is. With this set the page quotes a band
+    instead, and without it says nothing extra.
+    """
+    raw = os.environ.get("FUEL_PRICE_RANGE", "").strip()
+    if not raw:
+        return None
+    try:
+        low, high = (float(part) for part in raw.split(","))
+    except ValueError:
+        logging.getLogger(__name__).warning("FUEL_PRICE_RANGE: ignoring %r", raw)
+        return None
+    if low <= 0 or high < low:
+        logging.getLogger(__name__).warning("FUEL_PRICE_RANGE: ignoring %r", raw)
+        return None
+    return (low, high)
+
+
 def _ev_monthly_efficiency() -> tuple[float, ...]:
     """Twelve factors, January first, normalised to average 1.
 
@@ -304,11 +325,24 @@ class Settings:
     # ice_l_per_100km: what the petrol car it replaces actually used, not
     #   its type approval. A petrol SUV of the same size runs 9 to 11 in
     #   owner logs, so 8.5 is the cautious end of a fair comparison.
+    # fuel_chf_per_litre: a price, which is the one input here that is
+    #   neither measured nor stable. Bleifrei 95 went 1.87 in July 2026,
+    #   over 2.00 in August, 2.13 in October and 1.99 on 6 November - a
+    #   14% swing inside four months, where the annual projection it
+    #   feeds wants an average rather than whatever it cost last Friday.
+    #   fuel_price_as_of records when the figure was last looked up, so
+    #   the page can say how old it is instead of implying a live feed,
+    #   and fuel_price_range is the low and high worth quoting around it.
+    #   Nothing fetches any of this: it is a setting, by choice. Scraping
+    #   a motoring club's web page every hour to refine a twelve-month
+    #   estimate would be precision theatre.
     ev_km_per_kwh: float
     ev_charging_loss_pct: float
     ev_monthly_efficiency: tuple[float, ...]
     ice_l_per_100km: float
     fuel_chf_per_litre: float
+    fuel_price_as_of: str
+    fuel_price_range: tuple[float, float] | None
 
     # What the installation cost, and what counts as earning it back. These
     # amounts live in .env and never in the repository: an invoice is the
@@ -582,7 +616,9 @@ def load_settings() -> Settings:
         ev_charging_loss_pct=float(os.environ.get("EV_CHARGING_LOSS_PCT", "10")),
         ev_monthly_efficiency=_ev_monthly_efficiency(),
         ice_l_per_100km=float(os.environ.get("ICE_L_PER_100KM", "0")),
-        fuel_chf_per_litre=float(os.environ.get("FUEL_CHF_PER_LITRE", "2.05")),
+        fuel_chf_per_litre=float(os.environ.get("FUEL_CHF_PER_LITRE", "2.00")),
+        fuel_price_as_of=os.environ.get("FUEL_PRICE_AS_OF", ""),
+        fuel_price_range=_fuel_price_range(),
         investment_chf=float(os.environ.get("INVESTMENT_CHF", "0")),
         investment_extra_chf=float(os.environ.get("INVESTMENT_EXTRA_CHF", "0")),
         investment_extra_label=os.environ.get(
