@@ -1043,6 +1043,42 @@ Everything that used to be prose above the fold - the benchmark's
 caveats, the tariff history, the per-stream basis - moved into the table
 below it. The card is a third of its old height and says more.
 
+### 22. Kilowatt-hours are not a unit anybody drives in
+
+The charging figure is measured. What it means is not: nobody thinks in
+kilowatt-hours, they think in kilometres and in what the old car would
+have cost over them. So the wallbox page converts twice, and prints both
+conversions next to the answer instead of hiding them in a config file.
+
+How far a kWh goes depends on the month, and the factors are derived
+rather than guessed:
+
+* EV Database's figures for this car, 196 Wh/km combined at -10 °C with
+  the heating on and 145 Wh/km at 23 °C with the cooling off. Linear
+  between the two is 1.55 Wh/km per kelvin, and nothing is added above
+  23 °C - cold costs far more than heat.
+* MeteoSwiss monthly mean temperatures for Zurich, 1991-2020 normals.
+
+That gives 4.6 km/kWh in January against 5.5 in July - 18% apart, where
+the figure usually quoted is the -10 °C worst case of 35%. The sanity
+check: owner logs for the same car on Spritmonitor show 11.5 kWh/100km
+on summer tyres against 13.4 on winter tyres, 16% apart. The model lands
+between the two, which is where a Swiss winter actually is - January's
+mean here is +0.9 °C, not -10.
+
+It is still a floor. A monthly mean is not a driving temperature, and a
+commute happens at the cold end of the day; and a short winter trip pays
+for heating the cabin over fewer kilometres than a long one. The twelve
+factors are `EV_MONTHLY_EFFICIENCY`, to be replaced with measured ones
+once there is a winter's worth of them.
+
+Two things this deliberately does not do. The petrol side carries no
+season, although a cold engine also drinks more - which makes the
+comparison the conservative one. And it is not a finance stream: the
+payback already values the charging against a public charger, and one
+car cannot be compared with two alternatives at the same time without
+counting the same francs twice. The card says so under its table.
+
 ## Setup
 
 ```
