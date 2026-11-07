@@ -563,6 +563,7 @@ def _ev_vs_ice(by_day: list[dict], window_days: float) -> dict | None:
         "km_per_kwh": settings.ev_km_per_kwh,
         "l_per_100km": settings.ice_l_per_100km,
         "fuel_chf_per_litre": settings.fuel_chf_per_litre,
+        "currency": "CHF",
         # A price is not a measurement and this one moved 14% in four
         # months, so it travels with the date it was looked up and the
         # band it has been in.

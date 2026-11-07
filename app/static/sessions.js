@@ -245,9 +245,11 @@ function renderIce(ice) {
     const a = ice.annual;
     year.innerHTML = !a
       ? ""
-      : `<strong>Over a year at this rate: ${money(a.saved_chf)}` +
+      // Whole francs: centimes on a figure extrapolated from a
+      // fortnight would be a claim the arithmetic cannot support.
+      : `<strong>Over a year at this rate: ${fmt(a.saved_chf, 0)} ${ice.currency}` +
         (a.saved_low && a.saved_high
-          ? `, between ${money(a.saved_low, 0)} and ${money(a.saved_high, 0)} over the ` +
+          ? `, between ${fmt(a.saved_low, 0)} and ${fmt(a.saved_high, 0)} over the ` +
             `range the pump price has been in`
           : "") +
         `.</strong> ` +
@@ -452,7 +454,10 @@ function renderIce(ice) {
             : ""
         }. Nothing here fetches it, and nothing could usefully forecast it${
           ice.annual
-            ? ` - every 10 rappen on the litre is ${money(ice.annual.chf_per_10rp, 0)} a year`
+            ? ` - every 10 rappen on the litre is ${fmt(
+                ice.annual.chf_per_10rp,
+                0
+              )} ${ice.currency} a year`
             : ""
         }. The y-axis does not start at zero. This is not in the payback on the
         energy page and must not be added to it: that one is measured
