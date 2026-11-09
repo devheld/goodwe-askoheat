@@ -12,6 +12,11 @@
   --nav-asko:    #6250d6;
   --nav-wallbox: #15976a;
   --nav-energy:  #eb6834;
+  /* The balcony unit. Raspberry because the four above had taken blue,
+     violet, green and orange, and a nav accent only has to be told apart
+     from the other four - it labels an icon that already carries a word,
+     so nothing here is encoded by colour alone. */
+  --nav-balcony: #b5306b;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -19,6 +24,7 @@
     --nav-asko:    #9085e9;
     --nav-wallbox: #199e70;
     --nav-energy:  #d95926;
+    --nav-balcony: #d9538a;
   }
 }
 :root[data-theme="dark"] {
@@ -26,6 +32,7 @@
   --nav-asko:    #9085e9;
   --nav-wallbox: #199e70;
   --nav-energy:  #d95926;
+  --nav-balcony: #d9538a;
 }
 
 .appnav {

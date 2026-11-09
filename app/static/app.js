@@ -7,6 +7,33 @@ const TILE_DEFS = [
   { key: "grid_import_kw", label: "Grid Import", unit: "kW", color: "--series-grid" },
   { key: "grid_export_kw", label: "Grid Export", unit: "kW", color: "--series-grid-export" },
   {
+    key: "balcony_kw",
+    label: "Balcony",
+    unit: "kW",
+    color: "--series-pv",
+    // The solar blue, because that is what it is - a second plant, not a
+    // different kind of energy. No plug, no tile: for most of this
+    // project's life there was no balcony, and a dash would read as a
+    // measurement that failed.
+    get: (latest) => {
+      const bal = latest.balcony;
+      if (!bal) return null;
+      if (!bal.online) return { value: "-", sub: "The plug did not answer" };
+      const watts = (bal.power_kw || 0) * 1000;
+      return {
+        value: `${fmt(watts, 0)} W`,
+        // Against the nameplate: a bare wattage says nothing about
+        // whether the thing is working well.
+        sub: latest.balcony_nominal_w
+          ? `${fmt((100 * watts) / latest.balcony_nominal_w, 0)}% of ${fmt(
+              latest.balcony_nominal_w,
+              0
+            )} W - not in the PV figure`
+          : "Not in the PV figure",
+      };
+    },
+  },
+  {
     key: "heatpump_kw",
     label: "Heat Pump",
     unit: "kW",
@@ -1274,6 +1301,10 @@ async function fetchHistory(hours) {
     renderRoofChart();
     renderHeatpump(points, hours);
     renderWallboxChart(points, hours);
+    // The same arrangement as onLiveData above: a page's own file gets a
+    // look at the rows this already fetched instead of fetching them
+    // again. The balcony page draws its output curve from here.
+    if (typeof window.onHistoryData === "function") window.onHistoryData(points, hours);
 
     // Rows from before the battery-priority logic have no SOC - filtered
     // out rather than drawn as 0, which would look like an empty battery.

@@ -173,6 +173,74 @@ function renderLegend(containerId, items, { toggle = false } = {}) {
 
 // --- KPI tiles ---------------------------------------------------------------
 
+// Free text out of the .env file goes through this before it reaches
+// innerHTML. Nobody hostile is editing that file, but a stray ampersand
+// in a product name should not be able to break a card either.
+function balconyModelLabel(text) {
+  return String(text).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
+  );
+}
+
+// The balcony's own card. No chart: at this size the interesting thing
+// is two numbers and the sentence that says where they do and do not
+// belong, and a two-bar chart of them would be a worse table.
+function renderBalconyCard(energy) {
+  const card = document.getElementById("balconyCard");
+  const verdict = document.getElementById("balconyEnergyVerdict");
+  const host = document.getElementById("balconyEnergyTable");
+  if (!card || !host) return;
+  const b = energy.balcony;
+  if (!b) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const t = energy.totals;
+  if (verdict) {
+    verdict.innerHTML =
+      `<strong>${kwh(b.kwh)}</strong> from the balcony in this period, worth ` +
+      `<strong>${money(b.chf)}</strong>. Added to the roof's ${kwh(t.pv)} that is ` +
+      `${kwh(t.pv + b.kwh)} of solar in all` +
+      (b.model ? ` (${balconyModelLabel(b.model)})` : "") +
+      `. <a href="/balcony">Day by day</a>.`;
+  }
+
+  host.innerHTML = `
+    <table class="data">
+      <thead><tr><th>Where it went</th><th>Energy</th><th>Priced at</th><th>Worth</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;vertical-align:baseline;background:${cssVar("--e-solar")}"></span>Used in the house</td>
+          <td>${kwh(b.self_kwh, 2)}</td>
+          <td>${tariffLabel("import")}/kWh</td>
+          <td>${money(b.self_chf)}</td>
+        </tr>
+        <tr>
+          <td><span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;vertical-align:baseline;background:${cssVar("--e-export")}"></span>Exported</td>
+          <td>${kwh(b.export_kwh, 2)}</td>
+          <td>${tariffLabel("export")}/kWh</td>
+          <td>${money(b.export_chf)}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="chart-note">
+      Where it meets the roof: the house has one export meter and two
+      plants behind it, so of the ${kwh(t.grid_export, 2)} that crossed it,
+      ${kwh(b.export_kwh, 2)} came from the balcony and
+      <strong>${kwh(b.roof_export_kwh, 2)} is the roof's</strong> - which is
+      the figure the roof's payback is credited with. Self-consumption
+      needs no such correction: the inverter's own meter sits at the
+      connection point, upstream of every socket, so a balcony inverter
+      downstream of it lowers the measured import and the measured house
+      load by the same amount, and the difference between those two - which
+      is what the roof's self-consumption is - comes out unchanged.
+      The plug measured for ${fmt(b.hours, 1)} of this period's
+      ${fmt(b.period_hours, 1)} hours.
+    </p>`;
+}
+
 function renderKpis(energy) {
   const t = energy.totals;
   const m = energy.metrics;
@@ -265,6 +333,26 @@ function renderKpis(energy) {
   if (oil) {
     const at = tiles.findIndex((t) => t.label === "Heat pump");
     tiles.splice(at < 0 ? tiles.length : at + 1, 0, oil);
+  }
+
+  // The balcony, directly under the production tile it is NOT part of -
+  // next to it so the two are easy to add up, labelled so they are never
+  // read as one. Its own money line, because unlike the roof sides this
+  // one does have a measured split between what it displaced and what it
+  // exported.
+  if (energy.balcony) {
+    const b = energy.balcony;
+    const at = tiles.findIndex((t) => t.label === "PV production");
+    tiles.splice(at < 0 ? 1 : at + 1, 0, {
+      label: "Balcony unit",
+      value: kwh(b.kwh),
+      money: money(b.chf),
+      sub:
+        b.self_pct === null
+          ? "Not in the PV figure above"
+          : `${fmt(b.self_pct, 0)}% used in the house - not in the PV figure above`,
+      color: "--e-solar",
+    });
   }
 
   const roof = roofTotals(energy);
@@ -1009,6 +1097,7 @@ onViewportResize(() => renderEnergy());
 function renderEnergy() {
   if (!state.energy) return;
   renderKpis(state.energy);
+  renderBalconyCard(state.energy);
   // The stacked consumers can be toggled; the source lines are references
   // and stay put, so they are listed but not clickable. Each names its own
   // dash, which is what tells them apart where they cross the fills.

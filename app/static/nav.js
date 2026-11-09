@@ -37,6 +37,19 @@ const NAV_ITEMS = [
            <rect x="15.6" y="15.6" width="3.2" height="3.6" rx="1.2"/>`,
   },
   {
+    href: "/balcony",
+    label: "Balcony",
+    accent: "--nav-balcony",
+    // A railing with a panel leaning on it, and the sun above: the thing
+    // itself, because "second PV plant" has no icon anybody recognises.
+    icon: `<path d="M3.4 20.4h17.2"/>
+           <path d="M6 20.4v-6.1h12v6.1"/>
+           <path d="M6 17.3h12"/><path d="M10 14.3v6.1"/><path d="M14 14.3v6.1"/>
+           <circle cx="17.4" cy="6.2" r="2.6"/>
+           <path d="M17.4 1.9v1"/><path d="M17.4 9.5v1"/>
+           <path d="M13.1 6.2h1"/><path d="M20.7 6.2h1"/>`,
+  },
+  {
     href: "/energy",
     label: "Energy",
     accent: "--nav-energy",

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Balcony - Home Energy Manager</title>
+<link rel="stylesheet" href="/static/base.css?v=10" />
+<link rel="stylesheet" href="/static/nav.css?v=2" />
+</head>
+<body>
+<main>
+  <nav data-nav></nav>
+  <h1>Balcony</h1>
+  <p class="subtitle" id="statusLine">Loading data...</p>
+
+  <section class="tiles" id="tilesBalcony"></section>
+  <p class="note" id="balconyNote"></p>
+
+  <div class="range-row" id="rangeRow">
+    <button data-hours="1">1h</button>
+    <button data-hours="6">6h</button>
+    <button data-hours="24" aria-pressed="true">24h</button>
+    <button data-hours="168">7d</button>
+    <button data-hours="720">30d</button>
+  </div>
+
+  <div class="chart-card">
+    <h2>Output</h2>
+    <p class="chart-note">
+      Measured on the plug the inverter is on, which is the only instrument
+      that can see this plant at all - it is not on the house inverter's
+      MPPT inputs, so none of this appears in the PV figure anywhere else
+      on these pages. A gap is a gap, not a zero: the plug stops being
+      asked when it stops answering.
+    </p>
+    <div id="balconyChartWrap"></div>
+  </div>
+
+  <div class="chart-card" id="balconySplitCard" hidden>
+    <h2>Where it went</h2>
+    <p class="zoom-hint">
+      Every kilowatt-hour this made either displaced one the house was
+      about to buy or went out through the meter. Which of the two it was
+      is decided per sample against what the connection point was doing at
+      that moment, and the difference is worth more than twice as much per
+      kWh - so it is measured rather than assumed.
+    </p>
+    <p class="chart-verdict" id="balconyVerdict"></p>
+    <div class="legend" id="balconyLegend"></div>
+    <div id="balconySplitChart"></div>
+    <details class="table-view">
+      <summary>Table view</summary>
+      <div id="balconySplitTable"></div>
+    </details>
+  </div>
+
+  <div class="chart-card" id="balconyMoneyCard" hidden>
+    <h2>What it has earned</h2>
+    <p class="chart-verdict" id="balconyMoney"></p>
+    <div id="balconyMoneyTable"></div>
+  </div>
+
+  <p class="footer-note">As of: <span id="lastUpdate">-</span> · updates every <span id="updateInterval">-</span>s</p>
+</main>
+<div id="tooltip" role="tooltip" aria-hidden="true"></div>
+<script src="/static/nav.js?v=3"></script>
+<script src="/static/vendor/d3.v7.min.js"></script>
+<script src="/static/chartkit.js?v=2"></script>
+<script src="/static/balcony.js?v=1"></script>
+<script src="/static/app.js?v=28"></script>
+</body>
+</html>
