@@ -1126,6 +1126,66 @@ payback already values the charging against a public charger, and one
 car cannot be compared with two alternatives at the same time without
 counting the same francs twice. The card says so under its table.
 
+### 23. A second power plant the first one cannot see
+
+A 600 W balcony unit went up, its inverter plugged into a myStrom WiFi
+switch. The question it raised is not how to read a plug - that took
+twenty lines - but where its kilowatt-hours belong, and the instinct
+to add them to the PV figure is wrong twice over.
+
+**The plug is the only witness.** The balcony is on a socket, not on one
+of the inverter's MPPT inputs, so `pv_kw` contains nothing of it and
+never will. It gets its own column, its own page and its own money, and
+the one thing never done to it is folding it into the roof's.
+
+**What the balcony does to self-consumption: nothing, and that is a
+result rather than an omission.** The inverter's current transformer
+sits at the house connection point, upstream of every socket. A balcony
+inverter downstream of it lowers the measured grid import and the
+inverter's computed house load by exactly the same amount. Self-
+consumption is the difference between those two, so it comes out
+unchanged and already correct for the roof alone. Adding the balcony to
+it would have been the double count - the money would have gone up with
+no extra kWh behind it.
+
+**What it does to export: everything, and that needed measuring.** The
+house has one export meter and two plants behind it. A kWh the balcony
+pushed through it earns the same rappen whichever panel made it, but it
+pays off a different purchase. So the balcony's share is taken per
+sample as `MIN(balcony_kw, MAX(grid_kw, 0))` and subtracted from the
+roof's export credit. Per sample and never per bucket: a day that
+imported for twenty hours and exported for four would otherwise show
+either none of it or all of it, depending which way the net went.
+
+The remainder displaced a purchase and is worth the buying price - more
+than twice what the exported half earns here - so the split is the
+difference between a right answer and a wrong one, not a nicety.
+
+**The plug's own energy counter is not used.** `/report` carries a `Ws`
+field that looks like one and is not: it is the average per second since
+*the last call*, so it depends on the polling interval and is consumed
+by whoever read it last. With Home Assistant polling the same plug, both
+totals would quietly come up short. `energy_since_boot` is a real
+counter but restarts whenever the plug loses mains, which a balcony
+inverter's plug does often; it is recorded with its `boot_id` as a
+cross-check and nothing more. The energy that counts is integrated from
+`power`, like the house load and the heater.
+
+**And the plug cannot tell direction.** It reports an unsigned
+magnitude: 600 W out of an inverter and 600 W into a heater look
+identical to it. Nothing in the reading establishes which this is -
+setting `MYSTROM_BALCONY_HOST` is the statement that the inverter is
+what is plugged in, and the page says so rather than implying the
+instrument knows.
+
+None of this could be checked against daylight on the day it was
+written, so `tests/test_balcony_split.py` simulates a day at the real
+70-second tick with the house crossing zero several times, and compares
+the SQL against the same rule implemented in Python. It asserts that all
+three branches - importing, exporting more than the balcony made,
+exporting less - actually occurred, because a test that only exercises
+one of them has not tested the split.
+
 ## Setup
 
 ```
