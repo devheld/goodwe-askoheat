@@ -9,6 +9,7 @@ from .askoheat_client import AskoHeatController
 from .config import Settings
 from .database import HistoryStore, Reading
 from .goodwe_client import GoodWeModbusReader
+from .mystrom_client import MyStromClient
 from .shelly_client import ShellyClient
 from .wallbox_client import STATUS_TEXT, GoodWeWallboxReader
 
@@ -55,6 +56,7 @@ class SurplusController:
         store: HistoryStore,
         wallbox: GoodWeWallboxReader | None = None,
         shelly_meters: dict[str, ShellyClient] | None = None,
+        balcony: MyStromClient | None = None,
     ) -> None:
         self._settings = settings
         self._reader = reader
@@ -88,6 +90,12 @@ class SurplusController:
         # Last snapshot per meter, for _device_health - which reports what
         # the last poll found rather than asking again.
         self._shelly_snapshots: dict[str, dict] = {}
+        # The balcony unit's plug. Read-only like the clamps, on the same
+        # tick, and never consulted for a heating decision - although it
+        # arguably should be one day: 600 W of production the surplus
+        # calculation cannot see is 600 W the heater could have had.
+        self._balcony = balcony
+        self._balcony_snapshot: dict = {}
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -173,6 +181,11 @@ class SurplusController:
             health["shelly_" + role] = {
                 "online": bool(snapshot.get("online")),
                 "error": snapshot.get("error"),
+            }
+        if self._balcony is not None:
+            health["balcony"] = {
+                "online": bool(self._balcony_snapshot.get("online")),
+                "error": self._balcony_snapshot.get("error"),
             }
         return health
 
@@ -570,6 +583,7 @@ class SurplusController:
         at_grid = shelly.get("grid") or {}
         at_heatpump = shelly.get("heatpump") or {}
         at_wallbox = shelly.get("wallbox") or {}
+        balcony = self._poll_balcony()
 
         # Dashboard-only, and after the heating decision for the same reason.
         # Two witnesses to "is a car drawing", in order of preference: the
@@ -614,6 +628,8 @@ class SurplusController:
             wallbox_meter_energy_kwh=at_wallbox.get("import_kwh"),
             load_phase_kw=readings.load_phase_kw,
             pv_string_kw=readings.pv_string_kw,
+            balcony_kw=(balcony or {}).get("power_kw"),
+            balcony_energy_kwh=(balcony or {}).get("energy_since_boot_kwh"),
         )
         self._store.insert(reading)
         # A suspended poll carries either the previous snapshot or no reading
@@ -674,6 +690,9 @@ class SurplusController:
                 "balance_gap_kw": balance_gap_kw,
                 "wallbox": wallbox,
                 "shelly": shelly,
+                "balcony": balcony,
+                "balcony_nominal_w": self._settings.balcony_nominal_w or None,
+                "balcony_model": self._settings.balcony_model or None,
                 "heatpump_max_kw": self._settings.heatpump_max_kw or None,
                 "devices": self._device_health(),
             }
@@ -707,6 +726,25 @@ class SurplusController:
         for role, client in self._shelly_meters.items():
             self._shelly_snapshots[role] = client.as_dict()
         return dict(self._shelly_snapshots)
+
+    def _poll_balcony(self) -> dict | None:
+        """Read the balcony inverter's plug, every tick.
+
+        Same clock and same reasoning as the clamp meters: an HTTP GET
+        against a device that does not mind being asked. The client never
+        raises, so a plug that is away arrives as online=False rather than
+        as a missing key - which keeps a plug that was unplugged apart from
+        a house that never had one.
+
+        None when there is no balcony configured at all, which is what
+        leaves balcony_kw NULL in the record. NULL there means "nobody was
+        measuring", and energy_buckets reports that stretch as unmeasured
+        instead of as a balcony that produced nothing.
+        """
+        if self._balcony is None:
+            return None
+        self._balcony_snapshot = self._balcony.as_dict()
+        return dict(self._balcony_snapshot)
 
     def _poll_wallbox(
         self,

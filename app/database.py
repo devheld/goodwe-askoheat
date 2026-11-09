@@ -109,6 +109,13 @@ class Reading:
     # because the inverter has no per-input energy counter: the only way to
     # answer "which side produced how much" is to integrate these.
     pv_string_kw: tuple[float, float, float, float] | None = None
+    # The balcony unit, measured on the plug its inverter is on. A column
+    # of its own and never folded into pv_kw: that one is what the GoodWe's
+    # MPPT inputs made, and the balcony is not on them. Folding the two
+    # together would also double-count the money - see energy_buckets on
+    # balcony_export and _priced in main.py.
+    balcony_kw: float | None = None
+    balcony_energy_kwh: float | None = None
 
 
 def period_start(period: str, now: datetime | None = None) -> datetime:
@@ -247,6 +254,8 @@ class HistoryStore:
                 ("pv2_kw", "REAL"),
                 ("pv3_kw", "REAL"),
                 ("pv4_kw", "REAL"),
+                ("balcony_kw", "REAL"),
+                ("balcony_energy_kwh", "REAL"),
             ):
                 if column not in existing_columns:
                     conn.execute("ALTER TABLE readings ADD COLUMN " + column + " " + decl)
@@ -289,12 +298,14 @@ class HistoryStore:
                  heatpump_energy_kwh, load_l1_kw, load_l2_kw, load_l3_kw,
                  wallbox_meter_kw, wallbox_meter_l1_kw, wallbox_meter_l2_kw,
                  wallbox_meter_l3_kw, wallbox_meter_energy_kwh,
-                 pv1_kw, pv2_kw, pv3_kw, pv4_kw)
+                 pv1_kw, pv2_kw, pv3_kw, pv4_kw,
+                 balcony_kw, balcony_energy_kwh)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?)
+                        ?, ?, ?, ?,
+                        ?, ?)
                 """,
                 (
                     reading.timestamp,
@@ -327,6 +338,8 @@ class HistoryStore:
                     *(reading.wallbox_meter_phase_kw or (None, None, None)),
                     reading.wallbox_meter_energy_kwh,
                     *(reading.pv_string_kw or (None, None, None, None)),
+                    reading.balcony_kw,
+                    reading.balcony_energy_kwh,
                 ),
             )
 
@@ -429,6 +442,7 @@ class HistoryStore:
                     battery_discharge_kw,
                     COALESCE(heater_load_w, 0) / 1000.0 AS asko_kw,
                     heatpump_kw,
+                    balcony_kw,
                     (julianday(timestamp)
                         - julianday(LAG(timestamp) OVER (ORDER BY timestamp))) * 24.0 AS raw_h
                 FROM readings
@@ -466,6 +480,27 @@ class HistoryStore:
                 -- off.
                 SUM(COALESCE(heatpump_kw, 0) * h)                      AS heatpump,
                 SUM(CASE WHEN heatpump_kw IS NULL THEN 0 ELSE h END)   AS heatpump_hours,
+                -- The balcony unit, which the inverter cannot see: it is on
+                -- a socket, not on an MPPT input, so none of this is in pv
+                -- above and adding it there would be the one mistake that
+                -- matters here. COALESCE and balcony_hours for the same
+                -- reason as the pump: the column starts the day the plug
+                -- was read, and a period that predates it must report an
+                -- unmeasured stretch rather than a balcony that made
+                -- nothing.
+                SUM(COALESCE(balcony_kw, 0) * h)                       AS balcony,
+                SUM(CASE WHEN balcony_kw IS NULL THEN 0 ELSE h END)    AS balcony_hours,
+                -- The part of the balcony's output that left the house.
+                -- Per sample, never per bucket: a bucket that imported for
+                -- twenty hours and exported for four would otherwise show
+                -- no export at all, or all of it, depending on which way
+                -- the net went. MIN against the export of the same sample
+                -- is the balcony's share of it - the house cannot export
+                -- more than it exported, and the balcony cannot have
+                -- exported more than it made. The remainder displaced
+                -- import and is worth the buying price, which is the whole
+                -- reason the two are separated. See _priced.
+                SUM(MIN(COALESCE(balcony_kw, 0), MAX(grid_kw, 0)) * h)  AS balcony_export,
                 -- What went into the inverter and never came out of it as
                 -- load, storage or export. Clamped per sample because a
                 -- negative loss is arithmetic noise, not energy appearing.
@@ -501,6 +536,10 @@ class HistoryStore:
             "asko",
             "heatpump",
             "heatpump_hours",
+            "balcony",
+            "balcony_hours",
+            "balcony_export",
+            "balcony_self",
             "wallbox",
             "wallbox_measured",
             "other",
@@ -525,6 +564,16 @@ class HistoryStore:
                 - (row["heatpump"] or 0.0)
                 - row["wallbox"],
                 0.0,
+            )
+
+        for row in rows:
+            # What the balcony made and the house kept. Derived rather than
+            # summed, because the difference of two sums is only the sum of
+            # the differences when both are taken over the same samples -
+            # which they are here, and doing it per bucket keeps it true
+            # per bucket as well.
+            row["balcony_self"] = max(
+                0.0, (row["balcony"] or 0.0) - (row["balcony_export"] or 0.0)
             )
 
         losses = self._add_losses(spec["fmt"], since, rows)

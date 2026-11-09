@@ -157,6 +157,17 @@ def _finance_extra_streams() -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _finance_balcony_streams() -> tuple[str, ...]:
+    """Which savings belong to balcony_investment_chf.
+
+    Separate from the invoice and from the charger for the same reason
+    those two are separate from each other: three purchases, three
+    payback clocks. See _finance_extra_streams.
+    """
+    raw = os.environ.get("FINANCE_BALCONY_STREAMS", "balcony")
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 def _finance_return_streams() -> tuple[str, ...]:
     """Which measured savings are allowed to pay off the investment.
 
@@ -238,6 +249,28 @@ class Settings:
     shelly_wallbox_host: str
     shelly_port: int
     shelly_timeout_s: float
+
+    # The second power plant. A 600 W balcony unit on a myStrom plug, which
+    # is the only instrument that sees it: it is not on the inverter's
+    # MPPT inputs, so pv_kw does not contain a watt of it.
+    #
+    # Setting mystrom_balcony_host is the statement "the balcony inverter
+    # is on that plug". The plug reports an unsigned magnitude and cannot
+    # tell generation from consumption, so pointing this at a heater would
+    # book the heater as production. See MyStromClient.
+    #
+    # balcony_nominal_w is the panel's rating, used for nothing but the
+    # page - a measured 580 W means more next to a 600 W nameplate than on
+    # its own. balcony_model is free text for the same reason.
+    #
+    # balcony_investment_chf is what it cost. 0 means unknown, and then the
+    # balcony earns its money on the page without a payback of its own -
+    # the same treatment heating gets while the heat pump's share of the
+    # invoice is unknown.
+    mystrom_balcony_host: str
+    balcony_nominal_w: float
+    balcony_model: str
+    balcony_investment_chf: float
 
     # The heat pump chart's y axis, in kW. A curve measured against a
     # fixed ceiling says how hard the machine is working; one rescaled to
@@ -396,6 +429,12 @@ class Settings:
     # invoice. See _finance_extra_streams: three paybacks, because the
     # charger and the roof earn their money from different things.
     finance_extra_streams: tuple[str, ...]
+    # And which pay off balcony_investment_chf. Same reasoning a third
+    # time: a 600 W plug-in unit bought at a hardware store has nothing to
+    # do with the roof contract, and blending the two would report both
+    # wrongly - the balcony is cheap and earns little, the roof is dear and
+    # earns a lot, and their average describes neither.
+    finance_balcony_streams: tuple[str, ...]
 
     # The yardstick: what the installation was sold as doing. Taken from
     # the quote that led to the order, so the dashboard can answer "is it
@@ -613,6 +652,10 @@ def load_settings() -> Settings:
         ),
         shelly_heatpump_host=os.environ.get("SHELLY_HEATPUMP_HOST", ""),
         shelly_wallbox_host=os.environ.get("SHELLY_WALLBOX_HOST", ""),
+        mystrom_balcony_host=os.environ.get("MYSTROM_BALCONY_HOST", ""),
+        balcony_nominal_w=float(os.environ.get("BALCONY_NOMINAL_W", "0")),
+        balcony_model=os.environ.get("BALCONY_MODEL", ""),
+        balcony_investment_chf=float(os.environ.get("BALCONY_INVESTMENT_CHF", "0")),
         shelly_port=int(os.environ.get("SHELLY_PORT", "80")),
         # Short on purpose: this is a dashboard reading on the heating loop's
         # clock, and a meter that is slow to answer must not hold up the
@@ -653,6 +696,7 @@ def load_settings() -> Settings:
         investment_date=os.environ.get("INVESTMENT_DATE", "").strip(),
         finance_return_streams=_finance_return_streams(),
         finance_extra_streams=_finance_extra_streams(),
+        finance_balcony_streams=_finance_balcony_streams(),
         benchmark_label=os.environ.get("BENCHMARK_LABEL", "").strip(),
         benchmark_kwp=float(os.environ.get("BENCHMARK_KWP", "0")),
         benchmark_kwh_per_year=float(os.environ.get("BENCHMARK_KWH_PER_YEAR", "0")),

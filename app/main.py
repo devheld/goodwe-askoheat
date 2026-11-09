@@ -17,6 +17,7 @@ from .config import settings
 from .controller import SurplusController
 from .database import PERIODS, HistoryStore
 from .goodwe_client import GoodWeModbusReader
+from .mystrom_client import MyStromClient
 from .shelly_client import ShellyClient
 from .wallbox_client import GoodWeWallboxReader
 
@@ -106,8 +107,17 @@ async def lifespan(app: FastAPI):
         )
         if host
     }
+    # The second power plant: a 600 W balcony unit whose inverter is on a
+    # myStrom plug. The plug is the only instrument that sees it - it is
+    # not on the inverter's MPPT inputs - and setting the host is the
+    # statement that the inverter, and not something else, is plugged in.
+    balcony = (
+        MyStromClient(settings.mystrom_balcony_host, settings.shelly_timeout_s)
+        if settings.mystrom_balcony_host
+        else None
+    )
     controller = SurplusController(
-        settings, reader, askoheat, store, wallbox, shelly_meters
+        settings, reader, askoheat, store, wallbox, shelly_meters, balcony
     )
 
     worker_thread = threading.Thread(target=controller.run_forever, daemon=True)
@@ -163,6 +173,11 @@ async def wallbox_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "wallbox.html")
 
 
+@app.get("/balcony")
+async def balcony_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "balcony.html")
+
+
 def _rate_at(day: date) -> tuple[float, float]:
     """The (import, export) tariff in force on a given day.
 
@@ -211,6 +226,15 @@ def _priced(buckets: list[dict]) -> dict:
     what a page needs when it wants to print one price next to a figure
     that was earned under several.
     """
+    # On the self-consumption figure and the second power plant: `own`
+    # below is consumption less import, and both of those already have the
+    # balcony netted out of them. The inverter's CT sits at the connection
+    # point, upstream of every socket in the house, so a balcony inverter
+    # plugged in downstream reduces the measured import and the inverter's
+    # computed load by exactly the same amount. The difference - which is
+    # what `own` is - is therefore the roof's self-consumption alone,
+    # already correct, and adding the balcony to it would be the double
+    # count. Export is the exception and is handled in the loop.
     out = {
         "spent": 0.0,
         "earned": 0.0,
@@ -221,6 +245,11 @@ def _priced(buckets: list[dict]) -> dict:
         "pv_self_chf": 0.0,
         "pv_export_chf": 0.0,
         "heatpump_chf": 0.0,
+        # The balcony unit, which earns in both directions and belongs to
+        # neither of the two above. See the loop below.
+        "balcony_kwh": 0.0,
+        "balcony_self_chf": 0.0,
+        "balcony_export_chf": 0.0,
         # How much of a year this span represents, seasonally weighted:
         # the share of annual yield its months carry, scaled by how much
         # of each month was recorded. Plus the same share priced at the
@@ -237,6 +266,16 @@ def _priced(buckets: list[dict]) -> dict:
         imp, exp = _rate_at(_bucket_day(row["bucket"]))
         seen.add((imp, exp))
         own = max(0.0, (row["consumption"] or 0.0) - (row["grid_import"] or 0.0))
+        # What the balcony made, split by where it went. Both halves are
+        # measured per sample in energy_buckets; here they are only priced.
+        bal_export = row.get("balcony_export") or 0.0
+        bal_self = row.get("balcony_self") or 0.0
+        # The roof's export is the house's export less the balcony's share
+        # of it. This is the one place the two plants could be confused,
+        # and it is a real confusion rather than a tidy one: a kWh the
+        # balcony pushed through the meter earns the same rappen whichever
+        # panel made it, but it pays off a different purchase.
+        roof_export = max(0.0, (row["grid_export"] or 0.0) - bal_export)
         out["spent"] += (row["grid_import"] or 0.0) * imp
         out["earned"] += (row["grid_export"] or 0.0) * exp
         out["avoided"] += own * imp
@@ -244,8 +283,11 @@ def _priced(buckets: list[dict]) -> dict:
         out["self_consumed_kwh"] += own
         out["pv_kwh"] += row["pv"] or 0.0
         out["pv_self_chf"] += own * imp
-        out["pv_export_chf"] += (row["grid_export"] or 0.0) * exp
+        out["pv_export_chf"] += roof_export * exp
         out["heatpump_chf"] += (row["heatpump"] or 0.0) * imp
+        out["balcony_kwh"] += row.get("balcony") or 0.0
+        out["balcony_self_chf"] += bal_self * imp
+        out["balcony_export_chf"] += bal_export * exp
         hours = row["hours"] or 0.0
         w_imp += imp * hours
         w_exp += exp * hours
@@ -487,7 +529,56 @@ async def energy(period: str = Query("today")) -> dict:
     losses["real_chf"] = round(losses["real_kwh"] * avg_buy, 2)
     losses["curtailed_chf"] = round(losses["curtailed_kwh"] * avg_buy, 2)
     losses["headroom_chf"] = round(losses["curtailed_split"]["headroom"] * avg_buy, 2)
+
+    # The second power plant, kept in a block of its own rather than mixed
+    # into the totals above. None of it is in pv: the balcony is on a
+    # socket, not on an MPPT input, so the inverter never sees it and the
+    # two productions are genuinely separate measurements of separate
+    # machines. What they are not separate in is the export meter, which
+    # is why the roof's export is quoted here with the balcony's share
+    # taken off it.
+    payload["balcony"] = _balcony_block(totals, priced)
     return payload
+
+
+def _balcony_block(totals: dict, priced: dict) -> dict | None:
+    """The balcony unit's own figures, or None if it was never measured.
+
+    Hidden rather than zeroed when there is no plug: a period that ran
+    before the plug was fitted did not have a balcony making nothing, it
+    had nobody looking - and the two must not read the same, for the same
+    reason the heat pump's clamp carries heatpump_hours.
+    """
+    hours = totals.get("balcony_hours") or 0.0
+    if hours <= 0:
+        return None
+    made = totals.get("balcony") or 0.0
+    exported = totals.get("balcony_export") or 0.0
+    used = totals.get("balcony_self") or 0.0
+    return {
+        "kwh": round(made, 3),
+        "self_kwh": round(used, 3),
+        "export_kwh": round(exported, 3),
+        # The share that stayed in the house. On a 600 W unit against a
+        # house that rarely draws less than that, this should sit near
+        # 100% - a figure well below it means the house was exporting
+        # while the balcony was producing, which is the only condition in
+        # which a balcony unit earns the feed-in price instead of the
+        # retail one.
+        "self_pct": round(100.0 * used / made, 1) if made > 0 else None,
+        "chf": round(priced["balcony_self_chf"] + priced["balcony_export_chf"], 2),
+        "self_chf": round(priced["balcony_self_chf"], 2),
+        "export_chf": round(priced["balcony_export_chf"], 2),
+        # How much of the period the plug was actually reporting for, so a
+        # month that only has the plug for its last week says so.
+        "hours": round(hours, 2),
+        "period_hours": round(totals.get("hours") or 0.0, 2),
+        "nominal_w": settings.balcony_nominal_w or None,
+        "model": settings.balcony_model or None,
+        # The roof's export with the balcony's share removed - the one
+        # figure on this page that changes because the balcony exists.
+        "roof_export_kwh": round(max(0.0, (totals.get("grid_export") or 0.0) - exported), 3),
+    }
 
 
 def _ev_vs_ice(by_day: list[dict], window_days: float) -> dict | None:
@@ -737,7 +828,11 @@ async def finance() -> dict:
     oil = _oil_equivalent()
 
     tax_benefit = settings.tax_deduction_chf * settings.tax_deduction_rate
-    gross = settings.investment_chf + settings.investment_extra_chf
+    gross = (
+        settings.investment_chf
+        + settings.investment_extra_chf
+        + settings.balcony_investment_chf
+    )
     net = gross - settings.subsidy_chf - tax_benefit
 
     # Each stream is divided by the hours it was actually recorded over,
@@ -825,6 +920,44 @@ async def finance() -> dict:
                 ),
             }
         )
+    # The balcony. Its kilowatt-hours are in no other stream: the roof's
+    # two streams are built from the inverter's own pv_kw and from the
+    # export it can see, and the balcony is on neither - it is a socket,
+    # not an MPPT input. What it displaced is worth the buying price, what
+    # it pushed back out is worth the feed-in price, and that second half
+    # has just been taken off the roof's export above so the same rappen
+    # are not paid twice.
+    balcony_kwh = totals["balcony"] or 0.0
+    balcony_hours = totals["balcony_hours"] or 0.0
+    if balcony_hours > 0:
+        bal_self_kwh = totals["balcony_self"] or 0.0
+        bal_export_kwh = totals["balcony_export"] or 0.0
+        streams.append(
+            {
+                "key": "balcony",
+                "name": "Balcony unit",
+                "chf": round(priced["balcony_self_chf"] + priced["balcony_export_chf"], 2),
+                # Its own window, like the heat pump's: the plug started
+                # measuring long after the roof did, and dividing its
+                # francs by the whole record would report a daily rate it
+                # never earned.
+                "days": round(balcony_hours / 24.0, 2),
+                "basis": "%.1f kWh made, %.1f of them used in the house at %s%.4f and "
+                "%.1f exported at %s%.4f; metered for %d of %d recorded hours"
+                % (
+                    balcony_kwh,
+                    bal_self_kwh,
+                    "avg " if priced["blended"] else "",
+                    buy,
+                    bal_export_kwh,
+                    "avg " if priced["blended"] else "",
+                    sell,
+                    round(balcony_hours),
+                    round(totals["hours"] or 0.0),
+                ),
+            }
+        )
+
     for stream in streams:
         stream["counted"] = stream["key"] in settings.finance_return_streams
         stream["chf_per_day"] = (
@@ -837,7 +970,13 @@ async def finance() -> dict:
     # energy installation, so they come off the invoice's side and not off
     # the charger's.
     extra_members = [s for s in counted if s["key"] in settings.finance_extra_streams]
-    invoice_members = [s for s in counted if s["key"] not in settings.finance_extra_streams]
+    balcony_members = [s for s in counted if s["key"] in settings.finance_balcony_streams]
+    invoice_members = [
+        s
+        for s in counted
+        if s["key"] not in settings.finance_extra_streams
+        and s["key"] not in settings.finance_balcony_streams
+    ]
     invoice_net = settings.investment_chf - settings.subsidy_chf - tax_benefit
     groups: list[dict] = []
     if settings.investment_chf > 0 or invoice_members:
@@ -849,6 +988,15 @@ async def finance() -> dict:
                 settings.investment_extra_label or "Paid outside the invoice",
                 settings.investment_extra_chf,
                 extra_members,
+            )
+        )
+    if settings.balcony_investment_chf > 0 or balcony_members:
+        groups.append(
+            _payback(
+                "balcony",
+                "Balcony unit",
+                settings.balcony_investment_chf,
+                balcony_members,
             )
         )
     # The sum is worth a row only when there is more than one thing in it.
@@ -887,6 +1035,8 @@ async def finance() -> dict:
             "invoice": round(settings.investment_chf, 2),
             "extra": round(settings.investment_extra_chf, 2),
             "extra_label": settings.investment_extra_label,
+            "balcony": round(settings.balcony_investment_chf, 2),
+            "balcony_label": settings.balcony_model or None,
             "subsidy": round(settings.subsidy_chf, 2),
             "tax_deduction": round(settings.tax_deduction_chf, 2),
             "tax_rate": settings.tax_deduction_rate,
