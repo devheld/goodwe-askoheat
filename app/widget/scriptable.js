@@ -41,6 +41,11 @@ const C = {
   asko: dyn("#b06a00", "#c98500"),
 };
 
+// One size per kind of text, the same on every tile and every widget
+// size. iOS shrinks a text only when it would not fit otherwise (the
+// minimum scale factors below), so a value is 20 pt unless it cannot be.
+const SIZE = { value: 20, label: 12, sub: 11, smallValue: 14 };
+
 const F = {
   value: (s) => Font.boldRoundedSystemFont(s),
   semi: (s) => Font.semiboldRoundedSystemFont(s),
@@ -265,8 +270,8 @@ function emptyWidget(widget, family) {
 }
 
 // ------------------------------------------------------------ small: a list
-// Seven rows under a header in about 140 pt: the font is the largest the
-// row height of this phone's widget allows, not a fixed size.
+// Seven rows under a header in about 140 pt. 14 pt, and smaller only on a
+// phone whose widget is too short for seven rows of that.
 function buildSmall(widget, state) {
   const pad = 11;
   widget.setPadding(pad, pad + 1, pad, pad + 1);
@@ -274,7 +279,7 @@ function buildSmall(widget, state) {
   header(widget, state, "Energie", 11.5);
   widget.addSpacer(4);
   const rowH = (size.height - 2 * pad - 14 - 4) / 7;
-  const valueSize = Math.min(15, Math.floor((rowH / 1.2) * 2) / 2);
+  const valueSize = Math.min(SIZE.smallValue, Math.floor((rowH / 1.2) * 2) / 2);
   const rows = metrics(state.data);
   rows.forEach((m) => {
     const row = widget.addStack();
@@ -309,15 +314,13 @@ function tileMedium(parent, m, width, height) {
   addSymbol(top, m.sym, m.fallback, m.color, 12);
 
   t.addSpacer();
-  addText(t, m.value, F.value(20), m.zero ? C.dim : C.ink, 0.65);
+  addText(t, m.value, F.value(SIZE.value), m.zero ? C.dim : C.ink, 0.65);
   addText(t, m.sub || " ", F.label(10), m.subWarn ? C.warn : C.ink2, 0.75);
 }
 
-// 2x4: the value on the left, as large as the tile's height allows, with
-// its note under it; icon and heading stacked on the right. Before, the
-// heading took a row of its own above the value; beside it, the value
-// gets that height.
-function tileLarge(parent, m, width, height, valueSize) {
+// 2x4: the value on the left with its note under it; icon and heading
+// stacked on the right.
+function tileLarge(parent, m, width, height) {
   const t = parent.addStack();
   t.size = new Size(width, height);
   t.backgroundColor = C.tile;
@@ -327,8 +330,8 @@ function tileLarge(parent, m, width, height, valueSize) {
 
   const left = t.addStack();
   left.layoutVertically();
-  addText(left, m.value, F.value(valueSize), m.zero ? C.dim : C.ink, 0.7);
-  addText(left, m.sub || " ", F.label(10.5), m.subWarn ? C.warn : C.ink2, 0.75);
+  addText(left, m.value, F.value(SIZE.value), m.zero ? C.dim : C.ink, 0.7);
+  addText(left, m.sub || " ", F.label(SIZE.sub), m.subWarn ? C.warn : C.ink2, 0.75);
 
   t.addSpacer();
   const right = t.addStack();
@@ -339,7 +342,7 @@ function tileLarge(parent, m, width, height, valueSize) {
   right.addSpacer(3);
   const labelRow = right.addStack();
   labelRow.addSpacer();
-  addText(labelRow, m.label, F.label(11.5), C.ink2, 0.75);
+  addText(labelRow, m.label, F.label(SIZE.label), C.ink2, 0.75);
 }
 
 // ------------------------------------------------------------ medium: 4 x 2 tiles
@@ -389,15 +392,12 @@ function buildLarge(widget, state) {
   const tilesH = size.height - 2 * pad - headerH - sectionH - todayH - above;
   const cellW = (innerW - gap) / 2;
   const cellH = (tilesH - 3 * gap) / 4;
-  // What is left of the tile's height once padding and the note are off.
-  const valueSize = Math.min(28, Math.floor(((cellH - 8 - 13) / 1.2) * 2) / 2);
-
   const cells = metrics(d);
   cells.push(askoheat(d));
   for (let r = 0; r < 4; r++) {
     const row = widget.addStack();
     row.spacing = gap;
-    for (let c = 0; c < 2; c++) tileLarge(row, cells[r * 2 + c], cellW, cellH, valueSize);
+    for (let c = 0; c < 2; c++) tileLarge(row, cells[r * 2 + c], cellW, cellH);
     if (r < 3) widget.addSpacer(gap);
   }
 
@@ -435,9 +435,9 @@ function buildLarge(widget, state) {
     top.centerAlignContent();
     addSymbol(top, m.sym, null, m.color, 11);
     top.addSpacer(2);
-    addText(top, m.label, F.label(11), C.ink2, 0.7);
+    addText(top, m.label, F.label(SIZE.label - 1), C.ink2, 0.7);
     col.addSpacer(2);
-    addText(col, m.value, F.value(18), C.ink, 0.7);
+    addText(col, m.value, F.value(SIZE.value), C.ink, 0.7);
     if (i < today.length - 1) strip.addSpacer();
   });
 }
