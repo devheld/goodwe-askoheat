@@ -272,6 +272,12 @@ class Settings:
     balcony_model: str
     balcony_investment_chf: float
 
+    # Addresses the phone widget may reach this service at, tried in
+    # parallel - typically the VPN address and the LAN address, so the
+    # widget works away from home and at home with the VPN off. The address
+    # the script was downloaded from is always added, so this may be empty.
+    widget_hosts: tuple[str, ...]
+
     # The heat pump chart's y axis, in kW. A curve measured against a
     # fixed ceiling says how hard the machine is working; one rescaled to
     # its own maximum every time only says what happened to be the busiest
@@ -656,6 +662,11 @@ def load_settings() -> Settings:
         balcony_nominal_w=float(os.environ.get("BALCONY_NOMINAL_W", "0")),
         balcony_model=os.environ.get("BALCONY_MODEL", ""),
         balcony_investment_chf=float(os.environ.get("BALCONY_INVESTMENT_CHF", "0")),
+        widget_hosts=tuple(
+            h.strip().rstrip("/")
+            for h in os.environ.get("WIDGET_HOSTS", "").split(",")
+            if h.strip()
+        ),
         shelly_port=int(os.environ.get("SHELLY_PORT", "80")),
         # Short on purpose: this is a dashboard reading on the heating loop's
         # clock, and a meter that is slow to answer must not hold up the

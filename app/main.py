@@ -8,8 +8,10 @@ from calendar import monthrange
 from math import ceil
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+import json
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .askoheat_client import AskoHeatController
@@ -27,6 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+WIDGET_TEMPLATE = Path(__file__).resolve().parent / "widget" / "scriptable.js"
 
 controller: SurplusController | None = None
 store: HistoryStore | None = None
@@ -147,6 +150,90 @@ async def live() -> dict:
         "poll_interval_s": settings.poll_interval_s,
         "tariff": _tariff(),
     }
+
+
+def _meter_kw(latest: dict, role: str) -> float | None:
+    """A clamp meter's reading, or None when it is not there to ask.
+
+    Clamped at zero: a feed that only draws reads a few watts negative at
+    standby, and on a phone that would look like the heat pump exporting.
+    """
+    meter = (latest.get("shelly") or {}).get(role) or {}
+    if not meter.get("online") or meter.get("total_kw") is None:
+        return None
+    return max(0.0, meter["total_kw"])
+
+
+@app.get("/api/widget")
+async def widget_data() -> dict:
+    """The handful of numbers the phone widget shows, and nothing else.
+
+    /api/live is several kilobytes of diagnostics; a widget gets a few
+    seconds of network on iOS's schedule, so it gets this instead. Today's
+    totals come from the same buckets as the energy page.
+    """
+    if controller is None or controller.latest is None or store is None:
+        raise HTTPException(status_code=503, detail="No data received yet")
+    latest = controller.latest
+
+    # The charger: its clamp where there is one, because the clamp keeps
+    # measuring while the charger itself must not be asked (README 7).
+    charger = latest.get("wallbox") or {}
+    wallbox_kw = _meter_kw(latest, "wallbox")
+    if wallbox_kw is None and charger.get("online"):
+        wallbox_kw = charger.get("power_kw")
+    balcony = latest.get("balcony") or {}
+
+    today = store.energy_buckets("today")
+    totals, metrics = today["totals"], today["metrics"]
+    return {
+        "timestamp": latest["timestamp"],
+        "pv_kw": latest["pv_kw"],
+        "balcony_kw": balcony.get("power_kw") if balcony.get("online") else None,
+        "consumption_kw": latest["consumption_kw"],
+        "grid_import_kw": latest["grid_import_kw"],
+        "grid_export_kw": latest["grid_export_kw"],
+        "battery_soc_pct": latest["battery_soc_pct"],
+        # Positive while charging, negative while discharging.
+        "battery_kw": round(
+            (latest.get("battery_charge_kw") or 0.0)
+            - (latest.get("battery_discharge_kw") or 0.0),
+            3,
+        ),
+        "heatpump_kw": _meter_kw(latest, "heatpump"),
+        "wallbox_kw": wallbox_kw,
+        "wallbox_vehicle": charger.get("vehicle_connected"),
+        "askoheat_w": latest.get("heater_load_w"),
+        "askoheat_temp_c": latest.get("askoheat_temp_c"),
+        "today": {
+            "pv_kwh": totals["pv"],
+            "consumption_kwh": totals["consumption"],
+            "import_kwh": totals["grid_import"],
+            "export_kwh": totals["grid_export"],
+            "autarky_pct": metrics["autarky_pct"],
+            "self_consumption_pct": metrics["self_consumption_pct"],
+        },
+    }
+
+
+@app.get("/widget/scriptable.js")
+async def widget_script(request: Request) -> Response:
+    """The Scriptable widget, with this service's addresses filled in.
+
+    The addresses are not in the repository: the one the phone downloaded
+    the script from is by definition one it can reach, and WIDGET_HOSTS in
+    .env adds the others.
+    """
+    hosts = [str(request.base_url).rstrip("/"), *settings.widget_hosts]
+    hosts = list(dict.fromkeys(hosts))
+    code = WIDGET_TEMPLATE.read_text(encoding="utf-8").replace(
+        "/*__HOSTS__*/[]", json.dumps(hosts)
+    )
+    return Response(
+        content=code,
+        media_type="text/javascript; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="Energie.js"'},
+    )
 
 
 @app.get("/api/history")
