@@ -156,7 +156,7 @@ function metrics(d) {
       value: power(d.grid_import_kw), zero: isZero(d.grid_import_kw),
     },
     {
-      label: "Einspeisung", short: "Einsp.", sym: "arrow.up.circle", color: C.export,
+      label: "Einspeisung", short: "Einsp.", mid: "Einsp.", sym: "arrow.up.circle", color: C.export,
       value: power(d.grid_export_kw), zero: isZero(d.grid_export_kw),
     },
     {
@@ -265,52 +265,81 @@ function emptyWidget(widget, family) {
 }
 
 // ------------------------------------------------------------ small: a list
+// Seven rows under a header in about 140 pt: the font is the largest the
+// row height of this phone's widget allows, not a fixed size.
 function buildSmall(widget, state) {
-  widget.setPadding(12, 12, 12, 12);
-  header(widget, state, "Energie", 11);
-  widget.addSpacer(5);
+  const pad = 11;
+  widget.setPadding(pad, pad + 1, pad, pad + 1);
+  const size = widgetSize("small");
+  header(widget, state, "Energie", 11.5);
+  widget.addSpacer(4);
+  const rowH = (size.height - 2 * pad - 14 - 4) / 7;
+  const valueSize = Math.min(15, Math.floor((rowH / 1.2) * 2) / 2);
   const rows = metrics(state.data);
-  rows.forEach((m, i) => {
+  rows.forEach((m) => {
     const row = widget.addStack();
     row.centerAlignContent();
     const icon = row.addStack();
-    icon.size = new Size(16, 0);
-    addSymbol(icon, m.sym, m.fallback, m.color, 10);
-    addText(row, m.short, F.label(12), C.ink2);
+    icon.size = new Size(valueSize + 5, 0);
+    addSymbol(icon, m.sym, m.fallback, m.color, valueSize - 3);
+    addText(row, m.short, F.label(valueSize - 1.5), C.ink2);
     row.addSpacer();
-    addText(row, m.value, F.semi(13), m.zero ? C.dim : C.ink);
-    if (i < rows.length - 1) widget.addSpacer(1.5);
+    addText(row, m.value, F.semi(valueSize), m.zero ? C.dim : C.ink);
   });
   widget.addSpacer();
 }
 
 // ------------------------------------------------------------ tiles
-function tile(parent, m, width, height, big) {
+// 4x2: heading and icon on the right of the top row, the value below on
+// the left. A tile is about 70 pt wide, so the long words get their short
+// form.
+function tileMedium(parent, m, width, height) {
   const t = parent.addStack();
   t.layoutVertically();
   t.size = new Size(width, height);
   t.backgroundColor = C.tile;
   t.cornerRadius = 10;
-  t.setPadding(6, 7, 6, 5);
+  t.setPadding(6, 7, 6, 6);
 
   const top = t.addStack();
   top.centerAlignContent();
-  addSymbol(top, m.sym, m.fallback, m.color, big ? 12 : 10);
+  top.addSpacer();
+  addText(top, m.mid || m.label, F.label(10.5), C.ink2, 0.75);
   top.addSpacer(3);
-  // A 4x2 tile is about 70 pt wide: the long words get their short form.
-  addText(top, big ? m.label : m.mid || m.label, F.label(big ? 11 : 10), C.ink2, 0.7);
+  addSymbol(top, m.sym, m.fallback, m.color, 12);
 
   t.addSpacer();
-  const valueRow = t.addStack();
-  valueRow.bottomAlignContent();
-  addText(valueRow, m.value, F.value(big ? 22 : 17), m.zero ? C.dim : C.ink, 0.6);
-  if (big && m.sub) {
-    valueRow.addSpacer();
-    addText(valueRow, m.sub, F.label(10), m.subWarn ? C.warn : C.ink2, 0.6);
-  }
-  if (!big) {
-    addText(t, m.sub || " ", F.label(9), m.subWarn ? C.warn : C.ink2, 0.7);
-  }
+  addText(t, m.value, F.value(20), m.zero ? C.dim : C.ink, 0.65);
+  addText(t, m.sub || " ", F.label(10), m.subWarn ? C.warn : C.ink2, 0.75);
+}
+
+// 2x4: the value on the left, as large as the tile's height allows, with
+// its note under it; icon and heading stacked on the right. Before, the
+// heading took a row of its own above the value; beside it, the value
+// gets that height.
+function tileLarge(parent, m, width, height, valueSize) {
+  const t = parent.addStack();
+  t.size = new Size(width, height);
+  t.backgroundColor = C.tile;
+  t.cornerRadius = 11;
+  t.setPadding(4, 9, 4, 8);
+  t.centerAlignContent();
+
+  const left = t.addStack();
+  left.layoutVertically();
+  addText(left, m.value, F.value(valueSize), m.zero ? C.dim : C.ink, 0.7);
+  addText(left, m.sub || " ", F.label(10.5), m.subWarn ? C.warn : C.ink2, 0.75);
+
+  t.addSpacer();
+  const right = t.addStack();
+  right.layoutVertically();
+  const iconRow = right.addStack();
+  iconRow.addSpacer();
+  addSymbol(iconRow, m.sym, m.fallback, m.color, 16);
+  right.addSpacer(3);
+  const labelRow = right.addStack();
+  labelRow.addSpacer();
+  addText(labelRow, m.label, F.label(11.5), C.ink2, 0.75);
 }
 
 // ------------------------------------------------------------ medium: 4 x 2 tiles
@@ -336,7 +365,7 @@ function buildMedium(widget, state) {
   for (let r = 0; r < 2; r++) {
     const row = widget.addStack();
     row.spacing = gap;
-    for (let c = 0; c < 4; c++) tile(row, cells[r * 4 + c], cellW, cellH, false);
+    for (let c = 0; c < 4; c++) tileMedium(row, cells[r * 4 + c], cellW, cellH);
     if (r === 0) widget.addSpacer(gap);
   }
 }
@@ -344,41 +373,44 @@ function buildMedium(widget, state) {
 // ------------------------------------------------------------ large: 2 x 4 tiles and today
 function buildLarge(widget, state) {
   const pad = 13;
-  const gap = 6;
+  const gap = 5;
   widget.setPadding(pad, pad, pad, pad);
   const size = widgetSize("large");
   const innerW = size.width - 2 * pad;
   const d = state.data;
 
-  header(widget, state, "Energie jetzt", 13);
-  widget.addSpacer(8);
+  header(widget, state, "Energie jetzt", 14);
+  widget.addSpacer(7);
 
-  const todayH = 50;
-  const headerH = 17 + 8;
-  const sectionH = 14 + 4;
-  const tilesH = size.height - 2 * pad - headerH - sectionH - todayH - 10;
+  const todayH = 52;
+  const headerH = 17 + 7;
+  const sectionH = 16 + 4;
+  const above = 8;
+  const tilesH = size.height - 2 * pad - headerH - sectionH - todayH - above;
   const cellW = (innerW - gap) / 2;
   const cellH = (tilesH - 3 * gap) / 4;
+  // What is left of the tile's height once padding and the note are off.
+  const valueSize = Math.min(28, Math.floor(((cellH - 8 - 13) / 1.2) * 2) / 2);
 
   const cells = metrics(d);
   cells.push(askoheat(d));
   for (let r = 0; r < 4; r++) {
     const row = widget.addStack();
     row.spacing = gap;
-    for (let c = 0; c < 2; c++) tile(row, cells[r * 2 + c], cellW, cellH, true);
+    for (let c = 0; c < 2; c++) tileLarge(row, cells[r * 2 + c], cellW, cellH, valueSize);
     if (r < 3) widget.addSpacer(gap);
   }
 
-  widget.addSpacer(10);
+  widget.addSpacer(above);
   const title = widget.addStack();
   title.centerAlignContent();
-  addText(title, "Heute", F.semi(12), C.ink);
+  addText(title, "Heute", F.semi(13), C.ink);
   title.addSpacer(4);
-  addText(title, "kWh", F.label(11), C.ink2);
+  addText(title, "kWh", F.label(12), C.ink2);
   title.addSpacer();
   const sc = d.today && d.today.self_consumption_pct;
   if (sc !== null && sc !== undefined) {
-    addText(title, `Eigenverbrauch ${pct(sc)}`, F.label(11), C.ink2);
+    addText(title, `Eigenverbrauch ${pct(sc)}`, F.label(12), C.ink2);
   }
   widget.addSpacer(4);
 
@@ -401,11 +433,11 @@ function buildLarge(widget, state) {
     col.layoutVertically();
     const top = col.addStack();
     top.centerAlignContent();
-    addSymbol(top, m.sym, null, m.color, 9);
+    addSymbol(top, m.sym, null, m.color, 11);
     top.addSpacer(2);
-    addText(top, m.label, F.label(10), C.ink2, 0.6);
+    addText(top, m.label, F.label(11), C.ink2, 0.7);
     col.addSpacer(2);
-    addText(col, m.value, F.value(16), C.ink, 0.6);
+    addText(col, m.value, F.value(18), C.ink, 0.7);
     if (i < today.length - 1) strip.addSpacer();
   });
 }
