@@ -1208,6 +1208,13 @@ totals), and the lock screen shapes. When nothing answers it shows the last
 reading it got, marked offline, and a reading older than ten minutes is
 marked as old - a stale 4 kW looks exactly like a live one.
 
+The script updates itself: at most once an hour, and every time it is
+opened in the app, it fetches the served version and writes it over its
+own file if it differs, after checking that the download starts like the
+script, has its addresses filled in and parses - a broken download must
+not replace a working script, since a script that does not run cannot
+update itself back. A change on the Pi reaches the phone within the hour.
+
 The port must not be opened to the internet for this: the API has no
 login. A VPN is the way in.
 

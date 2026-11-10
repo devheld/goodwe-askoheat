@@ -223,8 +223,14 @@ async def widget_script(request: Request) -> Response:
     The addresses are not in the repository: the one the phone downloaded
     the script from is by definition one it can reach, and WIDGET_HOSTS in
     .env adds the others.
+
+    WIDGET_HOSTS comes first and the requesting address only after it, so
+    with WIDGET_HOSTS set the text is the same whichever address asked.
+    That matters because the script updates itself by comparing its own
+    text with this one: an order that followed the asking address would
+    rewrite the phone's copy every time it switched between VPN and LAN.
     """
-    hosts = [str(request.base_url).rstrip("/"), *settings.widget_hosts]
+    hosts = [*settings.widget_hosts, str(request.base_url).rstrip("/")]
     hosts = list(dict.fromkeys(hosts))
     code = WIDGET_TEMPLATE.read_text(encoding="utf-8").replace(
         "/*__HOSTS__*/[]", json.dumps(hosts)

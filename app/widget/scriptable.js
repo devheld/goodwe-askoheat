@@ -5,7 +5,8 @@
 // placed at. Tapping it opens the dashboard.
 //
 // Served by the Pi at /widget/scriptable.js, which fills in HOSTS below:
-// the address the phone downloaded it from, plus WIDGET_HOSTS from .env.
+// WIDGET_HOSTS from .env, plus the address the phone downloaded it from.
+// It updates itself from there (see self-update at the end).
 // All of them are tried at once and the first answer wins, so the widget
 // works over the VPN away from home and on the LAN with the VPN off.
 //
@@ -473,14 +474,66 @@ function build(family, state) {
   return widget;
 }
 
-const state = await load();
+// ------------------------------------------------------------ self-update
+// The script keeps itself current: at most once an hour (every time when
+// opened in the app) it fetches the version the Pi serves and, if that
+// differs, writes it over its own file. The new version takes effect on
+// the next run; this run finishes with the code it started with.
+//
+// A broken download must not be able to replace a working script, because
+// a script that does not run cannot update itself back. So the new code
+// has to start like this file, carry filled-in addresses, and parse,
+// before it is written.
+const UPDATE_EVERY_H = 1;
+const MARKER = "// Energie - the Home Energy Manager as an iPhone widget";
+const UPDATE_STAMP = "energie-widget-update.txt";
 
-if (config.runsInWidget || config.runsInAccessoryWidget) {
+async function selfUpdate(host, force) {
+  try {
+    const own = module.filename;
+    const scripts = own.includes("Mobile Documents") ? FileManager.iCloud() : FileManager.local();
+    const stamp = fm.joinPath(fm.documentsDirectory(), UPDATE_STAMP);
+    if (!force && fm.fileExists(stamp)) {
+      const last = Number(fm.readString(stamp)) || 0;
+      if (Date.now() - last < UPDATE_EVERY_H * 3600 * 1000) return "skipped";
+    }
+    const req = new Request(`${host}/widget/scriptable.js`);
+    req.timeoutInterval = TIMEOUT_S;
+    const code = await req.loadString();
+    if (!req.response || req.response.statusCode !== 200) return "failed";
+    fm.writeString(stamp, String(Date.now()));
+
+    if (!code.startsWith(MARKER) || !/const HOSTS = \["http/.test(code)) return "failed";
+    const norm = (s) => s.replace(/\r\n/g, "\n");
+    if (norm(code) === norm(scripts.readString(own))) return "current";
+    // Parse only - constructing the function does not run it.
+    new (Object.getPrototypeOf(async function () {}).constructor)(code);
+    scripts.writeString(own, code);
+    return "updated";
+  } catch (e) {
+    return "failed";
+  }
+}
+
+const UPDATE_TEXT = {
+  updated: "Neue Version geladen, aktiv ab dem nächsten Aufruf.",
+  current: "Aktuelle Version.",
+  failed: "Update-Prüfung fehlgeschlagen.",
+  offline: "Pi nicht erreichbar, keine Update-Prüfung.",
+  skipped: "",
+};
+
+const state = await load();
+const inApp = !(config.runsInWidget || config.runsInAccessoryWidget);
+const update = state && !state.offline ? await selfUpdate(state.host, inApp) : "offline";
+
+if (!inApp) {
   Script.setWidget(build(config.widgetFamily || "medium", state));
 } else {
-  // Run inside the app: a preview of each size.
+  // Run inside the app: a preview of each size, and an update check.
   const pick = new Alert();
   pick.title = "Vorschau";
+  pick.message = UPDATE_TEXT[update] || "";
   pick.addAction("Klein (2x2)");
   pick.addAction("Mittel (4x2)");
   pick.addAction("Groß (4x4)");
