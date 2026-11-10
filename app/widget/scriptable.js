@@ -151,7 +151,7 @@ function metrics(d) {
       value: power(d.consumption_kw), zero: isZero(d.consumption_kw),
     },
     {
-      label: "Netzbezug", short: "Bezug", sym: "arrow.down.circle.fill", color: C.grid,
+      label: "Netzbezug", short: "Bezug", mid: "Bezug", sym: "arrow.down.circle.fill", color: C.grid,
       value: power(d.grid_import_kw), zero: isZero(d.grid_import_kw),
     },
     {
@@ -165,7 +165,7 @@ function metrics(d) {
       sub: resting ? "ruht" : `${charging ? "↑" : "↓"} ${power(d.battery_kw)}`,
     },
     {
-      label: "Wärmepumpe", short: "WP", sym: "heat.waves", fallback: "thermometer",
+      label: "Wärmepumpe", short: "WP", mid: "WP", sym: "heat.waves", fallback: "thermometer",
       color: C.hp, value: power(d.heatpump_kw), zero: isZero(d.heatpump_kw),
     },
     {
@@ -283,7 +283,8 @@ function tile(parent, m, width, height, big) {
   top.centerAlignContent();
   addSymbol(top, m.sym, m.fallback, m.color, big ? 12 : 10);
   top.addSpacer(3);
-  addText(top, m.label, F.label(big ? 11 : 10), C.ink2, 0.7);
+  // A 4x2 tile is about 70 pt wide: the long words get their short form.
+  addText(top, big ? m.label : m.mid || m.label, F.label(big ? 11 : 10), C.ink2, 0.7);
 
   t.addSpacer();
   const valueRow = t.addStack();
