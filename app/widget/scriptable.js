@@ -189,7 +189,7 @@ function balcony(d) {
   return {
     label: "Balkon", short: "Balkon", sym: "sun.min.fill", fallback: "sun.max", color: C.pv,
     value: power(d.balcony_kw), zero: isZero(d.balcony_kw),
-    sub: today === null || today === undefined ? null : `heute ${today.toFixed(2)} kWh`,
+    sub: today === null || today === undefined ? null : `${today.toFixed(2)} kWh`,
   };
 }
 
