@@ -340,7 +340,7 @@ function tileLarge(parent, m, width, height) {
   // the room it can, and iOS then shrinks the value and the note on the
   // left to make up for it. The width is estimated from the heading's
   // length at 12 pt; a heading a little wider shrinks a little itself.
-  right.size = new Size(Math.ceil(m.label.length * 6.8) + 4, 0);
+  right.size = new Size(Math.ceil(m.label.length * 7) + 4, 0);
   const iconRow = right.addStack();
   iconRow.addSpacer();
   addSymbol(iconRow, m.sym, m.fallback, m.color, 16);
