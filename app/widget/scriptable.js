@@ -151,11 +151,11 @@ function metrics(d) {
       value: power(d.consumption_kw), zero: isZero(d.consumption_kw),
     },
     {
-      label: "Netzbezug", short: "Bezug", mid: "Bezug", sym: "arrow.down.circle.fill", color: C.grid,
+      label: "Netzbezug", short: "Bezug", mid: "Bezug", sym: "arrow.down.circle", color: C.grid,
       value: power(d.grid_import_kw), zero: isZero(d.grid_import_kw),
     },
     {
-      label: "Einspeisung", short: "Einsp.", sym: "arrow.up.circle.fill", color: C.export,
+      label: "Einspeisung", short: "Einsp.", sym: "arrow.up.circle", color: C.export,
       value: power(d.grid_export_kw), zero: isZero(d.grid_export_kw),
     },
     {
@@ -220,13 +220,26 @@ function addText(stack, str, font, color, scale = 0.6) {
   return t;
 }
 
-// Widget sizes are not exposed, so they are estimated from the screen
-// width, erring small: a little slack looks fine, a clipped value does not.
+// Widget sizes are not exposed, so they come from Apple's published sizes
+// per screen width (and a measured one for the 402 pt screens). An unknown
+// width takes the next smaller row: a little slack looks fine, a clipped
+// value does not.
+const WIDGET_SIZES = [
+  // screen width, small, medium/large width, large height
+  [428, 170, 364, 382],
+  [414, 169, 360, 379],
+  [402, 162, 348, 362],
+  [390, 158, 338, 354],
+  [375, 155, 329, 345],
+  [0, 141, 292, 311],
+];
+
 function widgetSize(family) {
-  const w = Device.screenSize().width * 0.845;
-  if (family === "small") return new Size(w * 0.47, w * 0.47);
-  if (family === "medium") return new Size(w, w * 0.47);
-  return new Size(w, w * 1.045);
+  const sw = Device.screenSize().width;
+  const [, small, wide, tall] = WIDGET_SIZES.find(([w]) => sw >= w);
+  if (family === "small") return new Size(small, small);
+  if (family === "medium") return new Size(wide, small);
+  return new Size(wide, tall);
 }
 
 function header(widget, state, title, fontSize) {
@@ -372,8 +385,8 @@ function buildLarge(widget, state) {
   const today = [
     { label: "PV", value: num(t.pv_kwh), color: C.pv, sym: "sun.max.fill" },
     { label: "Verbrauch", value: num(t.consumption_kwh), color: C.cons, sym: "house.fill" },
-    { label: "Bezug", value: num(t.import_kwh), color: C.grid, sym: "arrow.down.circle.fill" },
-    { label: "Einsp.", value: num(t.export_kwh), color: C.export, sym: "arrow.up.circle.fill" },
+    { label: "Bezug", value: num(t.import_kwh), color: C.grid, sym: "arrow.down.circle" },
+    { label: "Einsp.", value: num(t.export_kwh), color: C.export, sym: "arrow.up.circle" },
     { label: "Autarkie", value: pct(t.autarky_pct), color: C.export, sym: "leaf.fill" },
   ];
   const strip = widget.addStack();
@@ -423,7 +436,7 @@ function buildAccessory(widget, state, family) {
   // accessoryRectangular: three lines, two values each.
   const pairs = [
     [["sun.max.fill", power(d.pv_kw)], ["house.fill", power(d.consumption_kw)]],
-    [["arrow.down.circle.fill", power(d.grid_import_kw)], ["arrow.up.circle.fill", power(d.grid_export_kw)]],
+    [["arrow.down.circle", power(d.grid_import_kw)], ["arrow.up.circle", power(d.grid_export_kw)]],
     [[batterySymbol(d.battery_soc_pct, charging), pct(d.battery_soc_pct)], ["heat.waves", power(d.heatpump_kw)]],
   ];
   pairs.forEach((pair) => {
