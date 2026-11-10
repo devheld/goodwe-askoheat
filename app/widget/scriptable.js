@@ -38,7 +38,6 @@ const C = {
   soc: dyn("#0f8a93", "#2fb3bd"),
   hp: dyn("#b5306b", "#d9538a"),
   wb: dyn("#7a3fb5", "#b07de0"),
-  asko: dyn("#b06a00", "#c98500"),
 };
 
 // One size per kind of text, the same on every tile and every widget
@@ -182,15 +181,15 @@ function metrics(d) {
   ];
 }
 
-function askoheat(d) {
-  const kw = (d.askoheat_w || 0) / 1000;
+// The balcony unit: solar like the roof, so the same blue with a smaller
+// sun. Its note is what it made today, which says more about a 600 W
+// plant than the moment's wattage does.
+function balcony(d) {
+  const today = d.today && d.today.balcony_kwh;
   return {
-    label: "AskoHeat", short: "Asko", sym: "flame.fill", color: C.asko,
-    value: power(kw), zero: isZero(kw),
-    sub:
-      d.askoheat_temp_c === null || d.askoheat_temp_c === undefined
-        ? null
-        : `${Math.round(d.askoheat_temp_c)} °C`,
+    label: "Balkon", short: "Balkon", sym: "sun.min.fill", fallback: "sun.max", color: C.pv,
+    value: power(d.balcony_kw), zero: isZero(d.balcony_kw),
+    sub: today === null || today === undefined ? null : `heute ${today.toFixed(2)} kWh`,
   };
 }
 
@@ -393,7 +392,10 @@ function buildLarge(widget, state) {
   const cellW = (innerW - gap) / 2;
   const cellH = (tilesH - 3 * gap) / 4;
   const cells = metrics(d);
-  cells.push(askoheat(d));
+  // The balcony has a tile of its own here, so the PV tile does not
+  // repeat it.
+  cells[0].sub = null;
+  cells.push(balcony(d));
   for (let r = 0; r < 4; r++) {
     const row = widget.addStack();
     row.spacing = gap;

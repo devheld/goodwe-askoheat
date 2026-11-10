@@ -210,6 +210,9 @@ async def widget_data() -> dict:
             "consumption_kwh": totals["consumption"],
             "import_kwh": totals["grid_import"],
             "export_kwh": totals["grid_export"],
+            # None, not 0, while no plug has measured today: a dash on the
+            # phone rather than a zero nobody measured.
+            "balcony_kwh": totals["balcony"] if totals.get("balcony_hours") else None,
             "autarky_pct": metrics["autarky_pct"],
             "self_consumption_pct": metrics["self_consumption_pct"],
         },
