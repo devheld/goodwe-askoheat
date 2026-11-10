@@ -1186,6 +1186,31 @@ three branches - importing, exporting more than the balcony made,
 exporting less - actually occurred, because a test that only exercises
 one of them has not tested the split.
 
+### 24. On the phone's home screen
+
+`/api/widget` returns the few numbers a home screen widget has room for:
+PV, consumption, grid import and export, battery level and power, heat
+pump, wallbox, AskoHeat, and today's totals. `/api/live` would do, but it
+is several kilobytes of diagnostics, and a widget gets a few seconds of
+network whenever iOS decides to refresh it.
+
+The widget itself is a script for the free Scriptable app, served at
+`/widget/scriptable.js`. The service fills in its own addresses on the way
+out - the one the phone downloaded it from, plus `WIDGET_HOSTS` from
+`.env` - so none is in the repository. Setting `WIDGET_HOSTS` to the VPN
+address and the LAN address makes the widget work away from home and at
+home with the VPN off; it asks all of them at once and takes the first
+answer.
+
+One script covers every size and lays itself out for the one it was placed
+at: small (a list), medium (4 x 2 tiles), large (2 x 4 tiles and today's
+totals), and the lock screen shapes. When nothing answers it shows the last
+reading it got, marked offline, and a reading older than ten minutes is
+marked as old - a stale 4 kW looks exactly like a live one.
+
+The port must not be opened to the internet for this: the API has no
+login. A VPN is the way in.
+
 ## Setup
 
 ```
@@ -1410,30 +1435,3 @@ sides stand in for a total they do not add up to.
   AskoHeat+) and firmware version, and may not generalize to other models.
 - `.env` holds the addresses of your own devices and is git-ignored - never
   commit it.
-
-
-## 24. On the phone's home screen
-
-`/api/widget` returns the few numbers a home screen widget has room for:
-PV, consumption, grid import and export, battery level and power, heat
-pump, wallbox, AskoHeat, and today's totals. `/api/live` would do, but it
-is several kilobytes of diagnostics, and a widget gets a few seconds of
-network whenever iOS decides to refresh it.
-
-The widget itself is a script for the free Scriptable app, served at
-`/widget/scriptable.js`. The service fills in its own addresses on the way
-out - the one the phone downloaded it from, plus `WIDGET_HOSTS` from
-`.env` - so none is in the repository. Setting `WIDGET_HOSTS` to the VPN
-address and the LAN address makes the widget work away from home and at
-home with the VPN off; it asks all of them at once and takes the first
-answer.
-
-One script covers every size and lays itself out for the one it was placed
-at: small (a list), medium (4 x 2 tiles), large (2 x 4 tiles and today's
-totals), and the lock screen shapes. When nothing answers it shows the last
-reading it got, marked offline, and a reading older than ten minutes is
-marked as old - a stale 4 kW looks exactly like a live one.
-
-The port must not be opened to the internet for this: the API has no
-login. A VPN is the way in.
-
