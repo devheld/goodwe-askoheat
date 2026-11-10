@@ -330,11 +330,17 @@ function tileLarge(parent, m, width, height) {
   const left = t.addStack();
   left.layoutVertically();
   addText(left, m.value, F.value(SIZE.value), m.zero ? C.dim : C.ink, 0.7);
-  addText(left, m.sub || " ", F.label(SIZE.sub), m.subWarn ? C.warn : C.ink2, 0.75);
+  addText(left, m.sub || " ", F.label(SIZE.sub), m.subWarn ? C.warn : C.ink2, 0.9);
 
   t.addSpacer();
   const right = t.addStack();
   right.layoutVertically();
+  // As wide as its heading and no wider. Without a width, the flexible
+  // spacers that right-align icon and heading make this column claim all
+  // the room it can, and iOS then shrinks the value and the note on the
+  // left to make up for it. The width is estimated from the heading's
+  // length at 12 pt; a heading a little wider shrinks a little itself.
+  right.size = new Size(Math.ceil(m.label.length * 6.8) + 4, 0);
   const iconRow = right.addStack();
   iconRow.addSpacer();
   addSymbol(iconRow, m.sym, m.fallback, m.color, 16);
