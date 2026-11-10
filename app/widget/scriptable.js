@@ -32,6 +32,9 @@ const C = {
   dim: dyn("#aeaeb2", "#636366"),
   warn: dyn("#b35c00", "#ff9f0a"),
   pv: dyn("#2a78d6", "#3987e5"),
+  // The sun on the PV and balcony icons: a bright orange, yellower than
+  // the house icon's orange-red so the two do not read as one.
+  sun: dyn("#ff9500", "#ff9f0a"),
   cons: dyn("#eb6834", "#d95926"),
   grid: dyn("#e87ba4", "#d55181"),
   export: dyn("#008300", "#30a14e"),
@@ -147,7 +150,7 @@ function metrics(d) {
   const resting = isZero(d.battery_kw);
   return [
     {
-      label: "PV", short: "PV", sym: "sun.max.fill", color: C.pv,
+      label: "PV", short: "PV", sym: "sun.max.fill", color: C.sun,
       value: power(d.pv_kw), zero: isZero(d.pv_kw),
       sub: isZero(d.balcony_kw) ? null : `+ Balkon ${power(d.balcony_kw)}`,
     },
@@ -181,13 +184,13 @@ function metrics(d) {
   ];
 }
 
-// The balcony unit: solar like the roof, so the same blue with a smaller
-// sun. Its note is what it made today, which says more about a 600 W
+// The balcony unit: solar like the roof, so the same orange, with a
+// panel rather than the sun so the two tiles are told apart. Its note is what it made today, which says more about a 600 W
 // plant than the moment's wattage does.
 function balcony(d) {
   const today = d.today && d.today.balcony_kwh;
   return {
-    label: "Balkon", short: "Balkon", sym: "sun.min.fill", fallback: "sun.max", color: C.pv,
+    label: "Balkon", short: "Balkon", sym: "solar.panel.fill", fallback: "sun.horizon.fill", color: C.sun,
     value: power(d.balcony_kw), zero: isZero(d.balcony_kw),
     sub: today === null || today === undefined ? null : `${today.toFixed(2)} kWh`,
   };
@@ -340,7 +343,8 @@ function tileLarge(parent, m, width, height) {
   // the room it can, and iOS then shrinks the value and the note on the
   // left to make up for it. The width is estimated from the heading's
   // length at 12 pt; a heading a little wider shrinks a little itself.
-  right.size = new Size(Math.ceil(m.label.length * 7) + 4, 0);
+  // Never narrower than the icon: "PV" alone is narrower than the sun.
+  right.size = new Size(Math.max(30, Math.ceil(m.label.length * 7) + 4), 0);
   const iconRow = right.addStack();
   iconRow.addSpacer();
   addSymbol(iconRow, m.sym, m.fallback, m.color, 16);
@@ -424,7 +428,7 @@ function buildLarge(widget, state) {
 
   const t = d.today || {};
   const today = [
-    { label: "PV", value: num(t.pv_kwh), color: C.pv, sym: "sun.max.fill" },
+    { label: "PV", value: num(t.pv_kwh), color: C.sun, sym: "sun.max.fill" },
     { label: "Verbrauch", value: num(t.consumption_kwh), color: C.cons, sym: "house.fill" },
     { label: "Bezug", value: num(t.import_kwh), color: C.grid, sym: "arrow.down.circle" },
     { label: "Einsp.", value: num(t.export_kwh), color: C.export, sym: "arrow.up.circle" },
