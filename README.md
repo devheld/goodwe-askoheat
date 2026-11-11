@@ -1215,6 +1215,16 @@ script, has its addresses filled in and parses - a broken download must
 not replace a working script, since a script that does not run cannot
 update itself back. A change on the Pi reaches the phone within the hour.
 
+A second script, `/widget/grafik.js` (saved as "Energie Grafik"), draws the
+same readings for the large size: where the power comes from and goes to
+now as two stacked bars on one scale, where today's consumption came from
+as a donut, the battery as a ring, and today hour by hour with generation
+above the line and consumption below it, split by origin. Its data comes
+from `/api/widget/graph`, which adds the day's hourly buckets. Charts are
+pictures and do not follow the phone's light and dark appearance, so only
+the marks are drawn, in one palette validated on both tile colours, and
+every text stays a widget text that does.
+
 The port must not be opened to the internet for this: the API has no
 login. A VPN is the way in.
 
