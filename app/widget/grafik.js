@@ -208,7 +208,9 @@ function stackedBarImage(w, h, parts, scale) {
   ctx.addPath(track);
   ctx.setFillColor(S.track);
   ctx.fillPath();
-  const shown = parts.filter((p) => ((p.value || 0) / scale) * w >= 1);
+  // The same threshold as the values under the bar: no segment without
+  // its number.
+  const shown = parts.filter((p) => (p.value || 0) >= 0.01 && (p.value / scale) * w >= 1);
   let x = 0;
   shown.forEach((p, i) => {
     const span = (p.value / scale) * w;
@@ -269,12 +271,14 @@ function hourlyImage(w, h, hours) {
   const ctx = canvas(w, h);
   const slot = w / 24;
   const bw = Math.max(2, slot - 3);
+  // gen is what the roof made; pv (from origin) is the part of the
+  // consumption it covered. Different numbers, so different names.
   const rows = (hours || []).map((x) => ({
     h: x.h,
-    pv: Math.max(0, x.pv || 0),
+    gen: Math.max(0, x.pv || 0),
     ...origin(x.consumption, x.import, x.discharge),
   }));
-  const maxUp = Math.max(0, ...rows.map((r) => r.pv));
+  const maxUp = Math.max(0, ...rows.map((r) => r.gen));
   const maxDown = Math.max(0, ...rows.map((r) => r.pv + r.batt + r.grid));
   if (maxUp + maxDown <= 0) {
     ctx.setFillColor(S.axis);
@@ -287,8 +291,8 @@ function hourlyImage(w, h, hours) {
   const base = Math.round(maxUp * scale);
   for (const r of rows) {
     const x = r.h * slot + (slot - bw) / 2;
-    if (r.pv * scale >= 0.5) {
-      const hp = r.pv * scale;
+    if (r.gen * scale >= 0.5) {
+      const hp = r.gen * scale;
       bar(ctx, x, base - hp, bw, hp, S.pv, "top");
     }
     const segs = [
@@ -484,9 +488,11 @@ function donutCard(parent, d, width, height) {
   head.centerAlignContent();
   addText(head, "Heute", F.title, C.ink);
   head.addSpacer();
-  addText(head, `${kwh(t.consumption_kwh)} kWh`, F.label, C.ink2);
+  addText(head, `${pct(t.autarky_pct)} autark`, F.label, C.ink2);
   card.addSpacer();
 
+  // The donut's middle holds what its parts add up to: the day's
+  // consumption. Its unit goes under it where the ring is large enough.
   const body = card.addStack();
   body.centerAlignContent();
   const dia = Math.min(height - 16 - 15 - 4, 70);
@@ -494,22 +500,26 @@ function donutCard(parent, d, width, height) {
   ring.size = new Size(dia, dia);
   ring.backgroundImage = donutImage(dia, parts, 9);
   ring.layoutVertically();
-  ring.centerAlignContent();
   ring.addSpacer();
   const l1 = ring.addStack();
   l1.addSpacer();
-  addText(l1, pct(t.autarky_pct), F.big, C.ink);
+  addText(l1, kwh(t.consumption_kwh), F.big, C.ink);
   l1.addSpacer();
-  const l2 = ring.addStack();
-  l2.addSpacer();
-  addText(l2, "autark", F.label, C.ink2);
-  l2.addSpacer();
+  if (dia >= 58) {
+    const l2 = ring.addStack();
+    l2.addSpacer();
+    addText(l2, "kWh", F.label, C.ink2);
+    l2.addSpacer();
+  }
   ring.addSpacer();
 
   body.addSpacer(10);
   const legend = body.addStack();
   legend.layoutVertically();
   legend.spacing = 4;
+  // A fixed width, so the spacer in each row has room to push the number
+  // to the right edge.
+  legend.size = new Size(width - 18 - dia - 10, 0);
   for (const p of parts) {
     const r = legend.addStack();
     r.centerAlignContent();
@@ -641,7 +651,7 @@ function build(family, state) {
   // The hourly chart gets what the others leave, and the middle row gives
   // way first when the flow card needs a second line of values.
   const left = H - 16 - 3 * GAP - plan.height;
-  const midH = Math.min(100, Math.max(84, left - 80));
+  const midH = Math.min(100, Math.max(80, left - 100));
   const row = widget.addStack();
   row.spacing = GAP;
   const lw = Math.round((W - GAP) * 0.6);
