@@ -1225,6 +1225,17 @@ pictures and do not follow the phone's light and dark appearance, so only
 the marks are drawn, in one palette validated on both tile colours, and
 every text stays a widget text that does.
 
+iOS has no 4x6 widget. `/widget/grafik46.js` ("Energie 4x6") is the same
+template laid out over a large widget with a medium one placed under it:
+the large half has the flow bars, today's consumption by origin and PV by
+use as two donuts, and the battery; the medium half has today hour by hour
+with the battery's charge level, from `/api/widget/graph`'s closing level
+per hour, as a strip of its own. Widgets cannot ask for the phone's
+appearance, so the marks take the light or the dark palette by the sun's
+elevation at the phone's last known position - automatic appearance
+switches at sunset and sunrise - unless the widget's parameter says
+`hell` or `dunkel`.
+
 The port must not be opened to the internet for this: the API has no
 login. A VPN is the way in.
 
