@@ -29,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-WIDGET_TEMPLATE = Path(__file__).resolve().parent / "widget" / "scriptable.js"
+WIDGET_DIR = Path(__file__).resolve().parent / "widget"
 
 controller: SurplusController | None = None
 store: HistoryStore | None = None
@@ -166,6 +166,10 @@ def _meter_kw(latest: dict, role: str) -> float | None:
 
 @app.get("/api/widget")
 async def widget_data() -> dict:
+    return _widget_payload()[0]
+
+
+def _widget_payload() -> tuple[dict, dict]:
     """The handful of numbers the phone widget shows, and nothing else.
 
     /api/live is several kilobytes of diagnostics; a widget gets a few
@@ -216,11 +220,44 @@ async def widget_data() -> dict:
             "autarky_pct": metrics["autarky_pct"],
             "self_consumption_pct": metrics["self_consumption_pct"],
         },
-    }
+    }, today
 
 
-@app.get("/widget/scriptable.js")
-async def widget_script(request: Request) -> Response:
+@app.get("/api/widget/graph")
+async def widget_graph() -> dict:
+    """The phone widget's numbers plus what its charts need.
+
+    Today hour by hour (local hours, from the energy page's own buckets),
+    and the day's battery throughput, which the consumption-origin chart
+    splits the day's consumption by.
+    """
+    payload, today = _widget_payload()
+    totals = today["totals"]
+    payload["today"]["battery_charge_kwh"] = totals["battery_charge"]
+    payload["today"]["battery_discharge_kwh"] = totals["battery_discharge"]
+    payload["hours"] = [
+        {
+            "h": int(b["bucket"][-2:]),
+            "pv": b["pv"] or 0.0,
+            "consumption": b["consumption"] or 0.0,
+            "import": b["grid_import"] or 0.0,
+            "export": b["grid_export"] or 0.0,
+            "discharge": b["battery_discharge"] or 0.0,
+        }
+        for b in today["buckets"]
+    ]
+    return payload
+
+
+WIDGET_SCRIPTS = {
+    # served path: (template, file name the phone saves it as)
+    "scriptable": ("scriptable.js", "Energie.js"),
+    "grafik": ("grafik.js", "Energie Grafik.js"),
+}
+
+
+@app.get("/widget/{name}.js")
+async def widget_script(name: str, request: Request) -> Response:
     """The Scriptable widget, with this service's addresses filled in.
 
     The addresses are not in the repository: the one the phone downloaded
@@ -233,15 +270,18 @@ async def widget_script(request: Request) -> Response:
     text with this one: an order that followed the asking address would
     rewrite the phone's copy every time it switched between VPN and LAN.
     """
+    if name not in WIDGET_SCRIPTS:
+        raise HTTPException(status_code=404, detail="No such widget")
+    template, filename = WIDGET_SCRIPTS[name]
     hosts = [*settings.widget_hosts, str(request.base_url).rstrip("/")]
     hosts = list(dict.fromkeys(hosts))
-    code = WIDGET_TEMPLATE.read_text(encoding="utf-8").replace(
+    code = (WIDGET_DIR / template).read_text(encoding="utf-8").replace(
         "/*__HOSTS__*/[]", json.dumps(hosts)
     )
     return Response(
         content=code,
         media_type="text/javascript; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="Energie.js"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
