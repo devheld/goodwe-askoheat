@@ -498,14 +498,18 @@ function donutCard(parent, d, width, height) {
   const dia = Math.min(height - 16 - 15 - 4, 70);
   const ring = body.addStack();
   ring.size = new Size(dia, dia);
-  ring.backgroundImage = donutImage(dia, parts, 9);
+  // A small ring is thinner and its number shorter, so the number stays
+  // inside it.
+  const small = dia < 58;
+  ring.backgroundImage = donutImage(dia, parts, small ? 7 : 9);
   ring.layoutVertically();
   ring.addSpacer();
   const l1 = ring.addStack();
   l1.addSpacer();
-  addText(l1, kwh(t.consumption_kwh), F.big, C.ink);
+  const total = t.consumption_kwh;
+  addText(l1, small && total !== null && total !== undefined ? `${Math.round(total)}` : kwh(total), F.big, C.ink);
   l1.addSpacer();
-  if (dia >= 58) {
+  if (!small) {
     const l2 = ring.addStack();
     l2.addSpacer();
     addText(l2, "kWh", F.label, C.ink2);
@@ -548,10 +552,12 @@ function batteryCard(parent, d, width, height) {
   const dia = Math.min(height - 16 - 15 - 4, 70);
   const ring = body.addStack();
   ring.size = new Size(dia, dia);
-  ring.backgroundImage = gaugeImage(dia, (d.battery_soc_pct || 0) / 100, S.batt, 9);
+  const small = dia < 58;
+  ring.backgroundImage = gaugeImage(dia, (d.battery_soc_pct || 0) / 100, S.batt, small ? 7 : 9);
   ring.centerAlignContent();
   ring.addSpacer();
-  addText(ring, pct(d.battery_soc_pct), F.big, C.ink);
+  const soc = d.battery_soc_pct;
+  addText(ring, small && soc !== null && soc !== undefined ? `${Math.round(soc)}%` : pct(soc), F.big, C.ink);
   ring.addSpacer();
   body.addSpacer();
   card.addSpacer();
