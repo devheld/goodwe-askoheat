@@ -1,31 +1,90 @@
 // Energie Grafik - the Home Energy Manager as a chart widget (Scriptable app).
 //
 // The companion to "Energie": the same readings, drawn instead of listed.
-// Built for the large size (4x4), the largest widget an iPhone has.
+// Two layouts from this one file, chosen by the Pi when it serves it:
 //
-//   Jetzt     two stacked bars on one scale: where the power comes from
-//             (PV, battery, grid) and where it goes (house, wallbox, heat
-//             pump, battery, export), with the values under each bar.
-//   Heute     where today's consumption came from (PV, battery, grid) as a
-//             donut, autarky in the middle.
-//   Akku      the charge level as a ring.
-//   Stunden   today hour by hour: generation above the line, consumption
-//             below it, split by where it came from, on one scale.
+//   4x4  one large widget ("Energie Grafik")
+//   4x6  a large widget with a medium one placed directly under it
+//        ("Energie 4x6") - iOS has no 4x6 size, so the two together are
+//        laid out as one. The same script goes into both; each draws its
+//        half by the size it was given.
 //
-// Charts are pictures and do not switch with the phone's light and dark
-// appearance, so only the marks are drawn, in colours checked against both
-// backgrounds; every text is a widget text and does switch.
+// Charts are pictures and do not switch with the phone's appearance, and
+// iOS does not tell a widget which appearance is on. So the marks take the
+// light or the dark palette by the sun: with appearance set to automatic,
+// iOS switches at sunset and sunrise. The widget's parameter "hell" or
+// "dunkel" overrides that for a phone on a fixed appearance. Texts are
+// widget texts and switch by themselves either way.
 //
-// Served by the Pi at /widget/grafik.js with HOSTS filled in, and updates
-// itself from there like "Energie" does.
+// Served by the Pi with HOSTS filled in, and updates itself from there.
 
 const HOSTS = /*__HOSTS__*/[];
-const SCRIPT_PATH = "/widget/grafik.js";
+const LAYOUT = /*__LAYOUT__*/"4x4";
+const SCRIPT_PATH = /*__SCRIPT__*/"/widget/grafik.js";
 const DATA_PATH = "/api/widget/graph";
 const TIMEOUT_S = 8;
 const STALE_MIN = 10;
 const REFRESH_MIN = 5;
 const CACHE_FILE = "energie-grafik-cache.json";
+const LOCATION_FILE = "energie-grafik-location.json";
+
+const fm = FileManager.local();
+const inApp = !config.runsInWidget;
+
+// ------------------------------------------------------------ light or dark
+// Where the sun is, after the NOAA low-precision formulas: good to a
+// fraction of a degree, which is a minute or two at sunset.
+function sunElevation(date, lat, lon) {
+  const rad = Math.PI / 180;
+  const d = date.getTime() / 86400000 + 2440587.5 - 2451545.0;
+  const g = (357.529 + 0.98560028 * d) % 360;
+  const q = (280.459 + 0.98564736 * d) % 360;
+  const l = q + 1.915 * Math.sin(g * rad) + 0.02 * Math.sin(2 * g * rad);
+  const e = 23.439 - 0.00000036 * d;
+  const ra = Math.atan2(Math.cos(e * rad) * Math.sin(l * rad), Math.cos(l * rad)) / rad;
+  const dec = Math.asin(Math.sin(e * rad) * Math.sin(l * rad)) / rad;
+  const gmst = (18.697374558 + 24.06570982441908 * d) % 24;
+  const hourAngle = gmst * 15 + lon - ra;
+  return (
+    Math.asin(
+      Math.sin(lat * rad) * Math.sin(dec * rad) +
+        Math.cos(lat * rad) * Math.cos(dec * rad) * Math.cos(hourAngle * rad)
+    ) / rad
+  );
+}
+
+// The phone's position, asked for only when the script runs in the app
+// (where iOS can ask for permission) and remembered; until then the middle
+// of Switzerland, which is within a quarter of an hour of any sunset there.
+async function homeLocation() {
+  const path = fm.joinPath(fm.documentsDirectory(), LOCATION_FILE);
+  if (inApp) {
+    try {
+      Location.setAccuracyToThreeKilometers();
+      const here = await Location.current();
+      fm.writeString(path, JSON.stringify({ latitude: here.latitude, longitude: here.longitude }));
+      return here;
+    } catch (e) {
+      // No permission: the remembered or the default position.
+    }
+  }
+  try {
+    if (fm.fileExists(path)) return JSON.parse(fm.readString(path));
+  } catch (e) {
+    // fall through
+  }
+  return { latitude: 46.8, longitude: 8.2 };
+}
+
+async function darkAppearance() {
+  const p = String(config.widgetParameter || "").toLowerCase();
+  if (p.includes("dunkel")) return true;
+  if (p.includes("hell")) return false;
+  const here = await homeLocation(); // in the app this also remembers it
+  // In the app the question can simply be asked.
+  if (inApp) return Device.isUsingDarkAppearance();
+  return sunElevation(new Date(), here.latitude, here.longitude) < -0.833;
+}
 
 // ------------------------------------------------------------ colours
 const dyn = (light, dark) => Color.dynamic(new Color(light), new Color(dark));
@@ -37,21 +96,30 @@ const C = {
   warn: dyn("#b35c00", "#ff9f0a"),
 };
 
-// The marks: one set for both appearances, each validated on the light and
-// the dark tile. Sources (PV, battery, grid) and sinks (house, wallbox,
-// heat pump, battery, export) are checked as the groups they appear in; the
-// battery keeps its blue in both, because it is the same thing.
-const S = {
-  pv: new Color("#c86e05"),
-  batt: new Color("#3f8ee8"),
-  grid: new Color("#cf4f8c"),
-  house: new Color("#8e8e93"),
-  wb: new Color("#8d5bd8"),
-  hp: new Color("#c2416f"),
-  exp: new Color("#2fa84f"),
-  track: new Color("#8e8e93", 0.25),
-  axis: new Color("#8e8e93", 0.7),
+// The marks, one palette per appearance, each validated on its own tile
+// colour in the groups the charts show together: sources (PV, battery,
+// grid) and sinks (house, wallbox, heat pump, battery, export). The battery
+// keeps its blue in both groups because it is the same thing.
+const PALETTES = {
+  light: {
+    pv: "#e8860b", batt: "#2a78d6", grid: "#d6458a",
+    house: "#8e8e93", wb: "#7a3fb5", hp: "#b5306b", exp: "#008300",
+  },
+  dark: {
+    pv: "#c86e05", batt: "#3f8ee8", grid: "#cf4f8c",
+    house: "#8e8e93", wb: "#8d5bd8", hp: "#c2416f", exp: "#2fa84f",
+  },
 };
+let S = null; // set once the appearance is known
+
+function usePalette(dark) {
+  const p = PALETTES[dark ? "dark" : "light"];
+  S = {};
+  for (const k of Object.keys(p)) S[k] = new Color(p[k]);
+  S.track = new Color("#8e8e93", dark ? 0.3 : 0.22);
+  S.axis = new Color("#8e8e93", 0.7);
+  S.socFill = new Color(p.batt, 0.18);
+}
 
 // One size per kind of text, as in "Energie".
 const F = {
@@ -78,9 +146,14 @@ function kw(v) {
   return a < 1 ? a.toFixed(2) : a.toFixed(1);
 }
 
-const kwh = (v) => (v === null || v === undefined ? "–" : v >= 100 ? `${Math.round(v)}` : v.toFixed(1));
-const pct = (v) => (v === null || v === undefined ? "–" : `${Math.round(v)} %`);
+const has = (v) => v !== null && v !== undefined && !isNaN(v);
+const kwh = (v) => (!has(v) ? "–" : v >= 100 ? `${Math.round(v)}` : v.toFixed(1));
+const pct = (v) => (!has(v) ? "–" : `${Math.round(v)} %`);
 const sum = (parts) => parts.reduce((a, p) => a + Math.max(0, p.value || 0), 0);
+
+function batteryFlow(bkw) {
+  return Math.abs(bkw || 0) * 1000 < 10 ? "ruht" : `${bkw > 0 ? "↑" : "↓"} ${power(bkw)}`;
+}
 
 function parseTs(ts) {
   return new Date(String(ts).replace(/(\.\d{3})\d+/, "$1"));
@@ -124,7 +197,6 @@ async function fetchFrom(host) {
   return { host, data };
 }
 
-const fm = FileManager.local();
 const cachePath = fm.joinPath(fm.documentsDirectory(), CACHE_FILE);
 
 async function load() {
@@ -144,6 +216,26 @@ async function load() {
       return null;
     }
   }
+}
+
+// Where an hour's (or the day's) consumption came from. The grid first,
+// then the battery, and PV is what is left: the inverter's PV figure also
+// covers what went into the battery or out to the grid, so it cannot be
+// read off directly. Import beyond consumption went into the battery.
+function origin(consumption, imported, discharged) {
+  const cons = Math.max(0, consumption || 0);
+  const grid = Math.min(Math.max(0, imported || 0), cons);
+  const batt = Math.min(Math.max(0, discharged || 0), cons - grid);
+  return { pv: cons - grid - batt, batt, grid };
+}
+
+// Where the day's PV went: export first, then the battery, and the house
+// had the rest.
+function pvUse(pv, exported, charged) {
+  const gen = Math.max(0, pv || 0);
+  const exp = Math.min(Math.max(0, exported || 0), gen);
+  const batt = Math.min(Math.max(0, charged || 0), gen - exp);
+  return { house: gen - exp - batt, batt, exp };
 }
 
 // ------------------------------------------------------------ drawing
@@ -256,17 +348,6 @@ function gaugeImage(d, fraction, color, thickness) {
   return ctx.getImage();
 }
 
-// Where an hour's (or the day's) consumption came from. The grid first,
-// then the battery, and PV is what is left: the inverter's PV figure also
-// covers what went into the battery or out to the grid, so it cannot be
-// read off directly. Import beyond consumption went into the battery.
-function origin(consumption, imported, discharged) {
-  const cons = Math.max(0, consumption || 0);
-  const grid = Math.min(Math.max(0, imported || 0), cons);
-  const batt = Math.min(Math.max(0, discharged || 0), cons - grid);
-  return { pv: cons - grid - batt, batt, grid };
-}
-
 function hourlyImage(w, h, hours) {
   const ctx = canvas(w, h);
   const slot = w / 24;
@@ -318,6 +399,28 @@ function hourlyImage(w, h, hours) {
   return ctx.getImage();
 }
 
+// The battery's charge level through the day, 0 to 100 %, on the same
+// hours as the chart above it: a line with a light fill under it.
+function socImage(w, h, hours) {
+  const ctx = canvas(w, h);
+  const slot = w / 24;
+  ctx.setFillColor(S.track);
+  ctx.fillRect(new Rect(0, h - 1, w, 1));
+  const pts = (hours || [])
+    .filter((x) => has(x.soc))
+    .map((x) => new Point((x.h + 0.5) * slot, 1 + (h - 2) * (1 - Math.max(0, Math.min(100, x.soc)) / 100)));
+  if (pts.length < 2) return ctx.getImage();
+  fillPolygon(ctx, [new Point(pts[0].x, h), ...pts, new Point(pts[pts.length - 1].x, h)], S.socFill);
+  const line = new Path();
+  line.move(pts[0]);
+  for (let i = 1; i < pts.length; i++) line.addLine(pts[i]);
+  ctx.addPath(line);
+  ctx.setStrokeColor(S.batt);
+  ctx.setLineWidth(2);
+  ctx.strokePath();
+  return ctx.getImage();
+}
+
 // ------------------------------------------------------------ widget pieces
 function addText(stack, str, font, color, scale = 0.85) {
   const t = stack.addText(str);
@@ -336,14 +439,25 @@ function dot(stack, color) {
   img.imageSize = new Size(8, 8);
 }
 
+const TILE_PAD_H = 9;
+
 function tile(parent, width, height) {
   const t = parent.addStack();
   t.layoutVertically();
   t.size = new Size(width, height || 0);
   t.backgroundColor = C.tile;
   t.cornerRadius = 12;
-  t.setPadding(8, 9, 8, 9);
+  t.setPadding(8, TILE_PAD_H, 8, TILE_PAD_H);
   return t;
+}
+
+function headRow(card, title, note, noteColor) {
+  const head = card.addStack();
+  head.centerAlignContent();
+  addText(head, title, F.title, C.ink);
+  head.addSpacer();
+  if (note) addText(head, note, F.label, noteColor || C.ink2);
+  return head;
 }
 
 const CHAR_W = 6.4; // estimated width of an 11 pt character
@@ -385,18 +499,20 @@ function addChips(parent, rows) {
   }
 }
 
-function widgetSize() {
-  const SIZES = [
-    [428, 364, 382],
-    [414, 360, 379],
-    [402, 348, 362],
-    [390, 338, 354],
-    [375, 329, 345],
-    [0, 292, 311],
-  ];
+const SIZES = [
+  // screen width, small, medium/large width, large height
+  [428, 170, 364, 382],
+  [414, 169, 360, 379],
+  [402, 162, 348, 362],
+  [390, 158, 338, 354],
+  [375, 155, 329, 345],
+  [0, 141, 292, 311],
+];
+
+function widgetSize(family) {
   const sw = Device.screenSize().width;
-  const [, w, h] = SIZES.find(([min]) => sw >= min);
-  return new Size(w, h);
+  const [, small, wide, tall] = SIZES.find(([min]) => sw >= min);
+  return family === "medium" ? new Size(wide, small) : new Size(wide, tall);
 }
 
 // ------------------------------------------------------------ the cards
@@ -431,10 +547,10 @@ function chipsOf(parts) {
     .map((p) => ({ label: p.label, value: kw(p.value), color: p.color }));
 }
 
-// Laid out before it is drawn, so its height is known and the hourly
-// chart can have what is left.
+// Laid out before it is drawn, so its height is known and the charts under
+// it can have what is left.
 function planFlow(d, width) {
-  const inner = width - 18;
+  const inner = width - 2 * TILE_PAD_H;
   const parts = flowParts(d);
   const fromRows = chipRows(chipsOf(parts.from), inner - LABEL_W);
   const toRows = chipRows(chipsOf(parts.to), inner - LABEL_W);
@@ -445,13 +561,8 @@ function planFlow(d, width) {
 
 function flowCard(parent, plan, width) {
   const card = tile(parent, width, plan.height);
-  const head = card.addStack();
-  head.centerAlignContent();
-  addText(head, "Jetzt", F.title, C.ink);
-  head.addSpacer();
-  addText(head, "kW", F.label, C.ink2);
+  headRow(card, "Jetzt", "kW");
   card.addSpacer(6);
-
   const scale = Math.max(sum(plan.parts.from), sum(plan.parts.to), 0.05);
   const group = (name, parts, rows) => {
     const row = card.addStack();
@@ -474,40 +585,26 @@ function flowCard(parent, plan, width) {
   group("Wohin", plan.parts.to, plan.toRows);
 }
 
-function donutCard(parent, d, width, height) {
+// A donut with what its parts add up to in the middle and a legend beside
+// it. A small ring is thinner and its number shorter, so the number stays
+// inside it.
+function donutCard(parent, spec, width, height, maxDia) {
   const card = tile(parent, width, height);
-  const t = d.today || {};
-  const o = origin(t.consumption_kwh, t.import_kwh, t.battery_discharge_kwh);
-  const parts = [
-    { label: "PV", value: o.pv, color: S.pv },
-    { label: "Akku", value: o.batt, color: S.batt },
-    { label: "Netz", value: o.grid, color: S.grid },
-  ];
-
-  const head = card.addStack();
-  head.centerAlignContent();
-  addText(head, "Heute", F.title, C.ink);
-  head.addSpacer();
-  addText(head, `${pct(t.autarky_pct)} autark`, F.label, C.ink2);
+  headRow(card, spec.title, spec.note);
   card.addSpacer();
 
-  // The donut's middle holds what its parts add up to: the day's
-  // consumption. Its unit goes under it where the ring is large enough.
   const body = card.addStack();
   body.centerAlignContent();
-  const dia = Math.min(height - 16 - 15 - 4, 70);
+  const dia = Math.min(height - 16 - 15 - 4, maxDia);
+  const small = dia < 58;
   const ring = body.addStack();
   ring.size = new Size(dia, dia);
-  // A small ring is thinner and its number shorter, so the number stays
-  // inside it.
-  const small = dia < 58;
-  ring.backgroundImage = donutImage(dia, parts, small ? 7 : 9);
+  ring.backgroundImage = donutImage(dia, spec.parts, small ? 7 : 9);
   ring.layoutVertically();
   ring.addSpacer();
   const l1 = ring.addStack();
   l1.addSpacer();
-  const total = t.consumption_kwh;
-  addText(l1, small && total !== null && total !== undefined ? `${Math.round(total)}` : kwh(total), F.big, C.ink);
+  addText(l1, small && has(spec.total) ? `${Math.round(spec.total)}` : kwh(spec.total), F.big, C.ink);
   l1.addSpacer();
   if (!small) {
     const l2 = ring.addStack();
@@ -517,14 +614,15 @@ function donutCard(parent, d, width, height) {
   }
   ring.addSpacer();
 
-  body.addSpacer(10);
+  const gap = 8;
+  body.addSpacer(gap);
   const legend = body.addStack();
   legend.layoutVertically();
   legend.spacing = 4;
   // A fixed width, so the spacer in each row has room to push the number
   // to the right edge.
-  legend.size = new Size(width - 18 - dia - 10, 0);
-  for (const p of parts) {
+  legend.size = new Size(width - 2 * TILE_PAD_H - dia - gap, 0);
+  for (const p of spec.parts) {
     const r = legend.addStack();
     r.centerAlignContent();
     dot(r, p.color);
@@ -536,67 +634,110 @@ function donutCard(parent, d, width, height) {
   card.addSpacer();
 }
 
+function consumptionSpec(d, title) {
+  const t = d.today || {};
+  const o = origin(t.consumption_kwh, t.import_kwh, t.battery_discharge_kwh);
+  return {
+    title,
+    note: `${pct(t.autarky_pct)} autark`,
+    total: t.consumption_kwh,
+    parts: [
+      { label: "PV", value: o.pv, color: S.pv },
+      { label: "Akku", value: o.batt, color: S.batt },
+      { label: "Netz", value: o.grid, color: S.grid },
+    ],
+  };
+}
+
+function pvSpec(d) {
+  const t = d.today || {};
+  const u = pvUse(t.pv_kwh, t.export_kwh, t.battery_charge_kwh);
+  return {
+    title: "PV",
+    note: `${pct(t.self_consumption_pct)} genutzt`,
+    total: t.pv_kwh,
+    parts: [
+      { label: "Haus", value: u.house, color: S.house },
+      { label: "Akku", value: u.batt, color: S.batt },
+      { label: "Einsp.", value: u.exp, color: S.exp },
+    ],
+  };
+}
+
 function batteryCard(parent, d, width, height) {
   const card = tile(parent, width, height);
-  const bkw = d.battery_kw || 0;
-  const head = card.addStack();
-  head.centerAlignContent();
-  addText(head, "Akku", F.title, C.ink);
-  head.addSpacer();
-  const flow = Math.abs(bkw) * 1000 < 10 ? "ruht" : `${bkw > 0 ? "↑" : "↓"} ${power(bkw)}`;
-  addText(head, flow, F.label, C.ink2);
+  headRow(card, "Akku", batteryFlow(d.battery_kw));
   card.addSpacer();
-
   const body = card.addStack();
   body.addSpacer();
   const dia = Math.min(height - 16 - 15 - 4, 70);
-  const ring = body.addStack();
-  ring.size = new Size(dia, dia);
-  const small = dia < 58;
-  ring.backgroundImage = gaugeImage(dia, (d.battery_soc_pct || 0) / 100, S.batt, small ? 7 : 9);
-  ring.centerAlignContent();
-  ring.addSpacer();
-  const soc = d.battery_soc_pct;
-  addText(ring, small && soc !== null && soc !== undefined ? `${Math.round(soc)}%` : pct(soc), F.big, C.ink);
-  ring.addSpacer();
+  addGauge(body, d, dia);
   body.addSpacer();
   card.addSpacer();
 }
 
-function hourlyCard(parent, d, width, height) {
-  const card = tile(parent, width, height);
-  const head = card.addStack();
-  head.centerAlignContent();
-  addText(head, "Heute je Stunde", F.title, C.ink);
-  head.addSpacer();
-  [
-    ["PV", S.pv],
-    ["Akku", S.batt],
-    ["Netz", S.grid],
-  ].forEach(([label, color], i) => {
-    if (i) head.addSpacer(8);
-    dot(head, color);
-    head.addSpacer(4);
-    addText(head, label, F.label, C.ink2);
-  });
-  card.addSpacer(4);
+function addGauge(parent, d, dia) {
+  const small = dia < 58;
+  const ring = parent.addStack();
+  ring.size = new Size(dia, dia);
+  ring.backgroundImage = gaugeImage(dia, (d.battery_soc_pct || 0) / 100, S.batt, small ? 7 : 9);
+  ring.centerAlignContent();
+  ring.addSpacer();
+  const soc = d.battery_soc_pct;
+  addText(ring, small && has(soc) ? `${Math.round(soc)}%` : pct(soc), F.big, C.ink);
+  ring.addSpacer();
+}
 
-  const inner = width - 18;
-  const GUTTER = 14;
-  const chartW = inner - GUTTER;
-  const chartH = Math.max(30, height - 16 - 15 - 4 - 3 - ROW_H);
+// The 4x6 top's battery card: the ring, and beside it what the battery is
+// doing and what it has moved today.
+function batteryWideCard(parent, d, width, height) {
+  const card = tile(parent, width, height);
+  card.layoutHorizontally();
+  card.centerAlignContent();
+  const dia = Math.min(height - 16, 64);
+  addGauge(card, d, dia);
+  card.addSpacer(14);
+  const info = card.addStack();
+  info.layoutVertically();
+  info.spacing = 3;
+  info.size = new Size(width - 2 * TILE_PAD_H - dia - 14, 0);
+  const t = d.today || {};
+  const row = (label, value, font, color) => {
+    const r = info.addStack();
+    r.centerAlignContent();
+    addText(r, label, font, color);
+    r.addSpacer();
+    addText(r, value, F.value, C.ink);
+  };
+  row("Akku", batteryFlow(d.battery_kw), F.title, C.ink);
+  row("Heute geladen", `${kwh(t.battery_charge_kwh)} kWh`, F.label, C.ink2);
+  row("Heute entladen", `${kwh(t.battery_discharge_kwh)} kWh`, F.label, C.ink2);
+}
+
+const GUTTER = 14;
+
+function addLegend(row, items) {
+  items.forEach(([label, color], i) => {
+    if (i) row.addSpacer(8);
+    dot(row, color);
+    row.addSpacer(4);
+    addText(row, label, F.label, C.ink2);
+  });
+}
+
+function addGutterChart(card, image, w, h, top, bottom) {
   const row = card.addStack();
   const gutter = row.addStack();
   gutter.layoutVertically();
-  gutter.size = new Size(GUTTER, chartH);
-  // Generation is drawn above the line, consumption below it.
-  addText(gutter, "↑", F.label, C.ink2, 1);
+  gutter.size = new Size(GUTTER, h);
+  addText(gutter, top, F.label, C.ink2, 1);
   gutter.addSpacer();
-  addText(gutter, "↓", F.label, C.ink2, 1);
-  const img = row.addImage(hourlyImage(chartW, chartH, d.hours));
-  img.imageSize = new Size(chartW, chartH);
+  if (bottom) addText(gutter, bottom, F.label, C.ink2, 1);
+  const img = row.addImage(image);
+  img.imageSize = new Size(w, h);
+}
 
-  card.addSpacer(3);
+function addHourAxis(card, chartW) {
   const axis = card.addStack();
   axis.addSpacer(GUTTER);
   ["0", "6", "12", "18"].forEach((label, i) => {
@@ -608,7 +749,39 @@ function hourlyCard(parent, d, width, height) {
   });
 }
 
-// ------------------------------------------------------------ assemble
+// Today hour by hour; with withSoc, the battery's charge level as a strip
+// of its own under it - a percentage, so not on the kWh scale.
+function hourlyCard(parent, d, width, height, withSoc) {
+  const card = tile(parent, width, height);
+  const head = card.addStack();
+  head.centerAlignContent();
+  addText(head, "Heute je Stunde", F.title, C.ink);
+  head.addSpacer();
+  addLegend(head, [
+    ["PV", S.pv],
+    ["Akku", S.batt],
+    ["Netz", S.grid],
+  ]);
+  card.addSpacer(4);
+
+  const chartW = width - 2 * TILE_PAD_H - GUTTER;
+  const SOC_H = 28;
+  const socBlock = withSoc ? SOC_H + 5 : 0;
+  const chartH = Math.max(30, height - 16 - 15 - 4 - 3 - ROW_H - socBlock);
+  // Generation is drawn above the line, consumption below it.
+  addGutterChart(card, hourlyImage(chartW, chartH, d.hours), chartW, chartH, "↑", "↓");
+  if (withSoc) {
+    card.addSpacer(5);
+    addGutterChart(card, socImage(chartW, SOC_H, d.hours), chartW, SOC_H, "%", null);
+  }
+  card.addSpacer(3);
+  addHourAxis(card, chartW);
+}
+
+// ------------------------------------------------------------ layouts
+const PAD = 12;
+const GAP = 8;
+
 function header(widget, state) {
   const row = widget.addStack();
   row.centerAlignContent();
@@ -618,14 +791,63 @@ function header(widget, state) {
   addText(row, f.text, F.label, f.warn ? C.warn : C.ink2);
 }
 
+function build4x4(widget, d, state, W, H) {
+  header(widget, state);
+  widget.addSpacer(GAP);
+  const plan = planFlow(d, W);
+  flowCard(widget, plan, W);
+  widget.addSpacer(GAP);
+  // The hourly chart gets what the others leave, and the middle row gives
+  // way first when the flow card needs a second line of values.
+  const left = H - 16 - 3 * GAP - plan.height;
+  const midH = Math.min(100, Math.max(80, left - 100));
+  const row = widget.addStack();
+  row.spacing = GAP;
+  const lw = Math.round((W - GAP) * 0.6);
+  donutCard(row, consumptionSpec(d, "Heute"), lw, midH, 70);
+  batteryCard(row, d, W - GAP - lw, midH);
+  widget.addSpacer(GAP);
+  hourlyCard(widget, d, W, left - midH, false);
+}
+
+// 4x6, the large half: now, today's two donuts, the battery.
+function buildTop(widget, d, state, W, H) {
+  header(widget, state);
+  widget.addSpacer(GAP);
+  const plan = planFlow(d, W);
+  flowCard(widget, plan, W);
+  widget.addSpacer(GAP);
+  const left = H - 16 - 3 * GAP - plan.height;
+  const donutH = Math.min(108, Math.max(84, left - 80));
+  const row = widget.addStack();
+  row.spacing = GAP;
+  const half = (W - GAP) / 2;
+  donutCard(row, consumptionSpec(d, "Verbrauch"), half, donutH, 56);
+  donutCard(row, pvSpec(d), half, donutH, 56);
+  widget.addSpacer(GAP);
+  batteryWideCard(widget, d, W, left - donutH);
+}
+
+// 4x6, the medium half: today hour by hour with the battery's level under
+// it, the whole widget for the one chart that needs width.
+function buildBottom(widget, d, state, W, H) {
+  hourlyCard(widget, d, W, H, true);
+}
+
 function build(family, state) {
   const widget = new ListWidget();
   widget.backgroundColor = C.bg;
   widget.refreshAfterDate = new Date(Date.now() + REFRESH_MIN * 60 * 1000);
-  if (family !== "large" && family !== "extraLarge") {
-    addText(widget, "Energie Grafik", F.title, C.ink);
+  const fits =
+    LAYOUT === "4x6" ? family === "large" || family === "medium" : family === "large";
+  if (!fits) {
+    addText(widget, LAYOUT === "4x6" ? "Energie 4x6" : "Energie Grafik", F.title, C.ink);
     widget.addSpacer(4);
-    const t = widget.addText("Für die Größe Groß (4x4) gebaut.");
+    const t = widget.addText(
+      LAYOUT === "4x6"
+        ? "Groß (4x4) oben, Mittel (4x2) darunter."
+        : "Für die Größe Groß (4x4) gebaut."
+    );
     t.font = F.label;
     t.textColor = C.ink2;
     return widget;
@@ -639,32 +861,13 @@ function build(family, state) {
     return widget;
   }
   widget.url = `${state.host}/`;
-
-  const PAD = 12;
-  const GAP = 8;
   widget.setPadding(PAD, PAD, PAD, PAD);
-  const size = widgetSize();
+  const size = widgetSize(family);
   const W = size.width - 2 * PAD;
   const H = size.height - 2 * PAD;
-  const d = state.data;
-
-  header(widget, state);
-  widget.addSpacer(GAP);
-  const plan = planFlow(d, W);
-  flowCard(widget, plan, W);
-  widget.addSpacer(GAP);
-
-  // The hourly chart gets what the others leave, and the middle row gives
-  // way first when the flow card needs a second line of values.
-  const left = H - 16 - 3 * GAP - plan.height;
-  const midH = Math.min(100, Math.max(80, left - 100));
-  const row = widget.addStack();
-  row.spacing = GAP;
-  const lw = Math.round((W - GAP) * 0.6);
-  donutCard(row, d, lw, midH);
-  batteryCard(row, d, W - GAP - lw, midH);
-  widget.addSpacer(GAP);
-  hourlyCard(widget, d, W, left - midH);
+  if (LAYOUT !== "4x6") build4x4(widget, state.data, state, W, H);
+  else if (family === "large") buildTop(widget, state.data, state, W, H);
+  else buildBottom(widget, state.data, state, W, H);
   return widget;
 }
 
@@ -675,7 +878,7 @@ function build(family, state) {
 // back.
 const UPDATE_EVERY_H = 1;
 const MARKER = "// Energie Grafik - the Home Energy Manager as a chart widget";
-const UPDATE_STAMP = "energie-grafik-update.txt";
+const UPDATE_STAMP = `energie-grafik-${LAYOUT}-update.txt`;
 
 async function selfUpdate(host, force) {
   try {
@@ -710,18 +913,21 @@ const UPDATE_TEXT = {
   skipped: "",
 };
 
+usePalette(await darkAppearance());
 const state = await load();
-const inApp = !config.runsInWidget;
 const update = state && !state.offline ? await selfUpdate(state.host, inApp) : "offline";
 
 if (!inApp) {
   Script.setWidget(build(config.widgetFamily || "large", state));
 } else {
   const note = new Alert();
-  note.title = "Energie Grafik";
+  note.title = LAYOUT === "4x6" ? "Energie 4x6" : "Energie Grafik";
   note.message = UPDATE_TEXT[update] || "";
-  note.addAction("Vorschau");
-  await note.presentAlert();
-  await build("large", state).presentLarge();
+  note.addAction("Vorschau Groß");
+  if (LAYOUT === "4x6") note.addAction("Vorschau Mittel");
+  note.addCancelAction("Fertig");
+  const choice = await note.presentAlert();
+  if (choice === 0) await build("large", state).presentLarge();
+  if (choice === 1) await build("medium", state).presentMedium();
 }
 Script.complete();

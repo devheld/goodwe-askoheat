@@ -235,6 +235,15 @@ async def widget_graph() -> dict:
     totals = today["totals"]
     payload["today"]["battery_charge_kwh"] = totals["battery_charge"]
     payload["today"]["battery_discharge_kwh"] = totals["battery_discharge"]
+    # The battery's charge level at the end of each hour so far: the last
+    # sample in it. Readings are stored in UTC; the hours are local.
+    now = datetime.now().astimezone()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    soc_by_hour: dict[int, float] = {}
+    for row in store.history(ceil((now - midnight).total_seconds() / 3600) + 1):
+        ts = datetime.fromisoformat(row["timestamp"]).astimezone()
+        if ts >= midnight and row.get("battery_soc_pct") is not None:
+            soc_by_hour[ts.hour] = row["battery_soc_pct"]
     payload["hours"] = [
         {
             "h": int(b["bucket"][-2:]),
@@ -243,6 +252,7 @@ async def widget_graph() -> dict:
             "import": b["grid_import"] or 0.0,
             "export": b["grid_export"] or 0.0,
             "discharge": b["battery_discharge"] or 0.0,
+            "soc": soc_by_hour.get(int(b["bucket"][-2:])),
         }
         for b in today["buckets"]
     ]
@@ -250,9 +260,20 @@ async def widget_graph() -> dict:
 
 
 WIDGET_SCRIPTS = {
-    # served path: (template, file name the phone saves it as)
-    "scriptable": ("scriptable.js", "Energie.js"),
-    "grafik": ("grafik.js", "Energie Grafik.js"),
+    # served path: (template, file name the phone saves it as, settings)
+    "scriptable": ("scriptable.js", "Energie.js", {}),
+    "grafik": ("grafik.js", "Energie Grafik.js", {}),
+    # The same charts spread over a large and a medium widget placed one
+    # above the other - iOS has no 4x6 size. Its own path, so it updates
+    # from its own copy.
+    "grafik46": (
+        "grafik.js",
+        "Energie 4x6.js",
+        {
+            '/*__LAYOUT__*/"4x4"': '"4x6"',
+            '/*__SCRIPT__*/"/widget/grafik.js"': '"/widget/grafik46.js"',
+        },
+    ),
 }
 
 
@@ -272,12 +293,14 @@ async def widget_script(name: str, request: Request) -> Response:
     """
     if name not in WIDGET_SCRIPTS:
         raise HTTPException(status_code=404, detail="No such widget")
-    template, filename = WIDGET_SCRIPTS[name]
+    template, filename, replacements = WIDGET_SCRIPTS[name]
     hosts = [*settings.widget_hosts, str(request.base_url).rstrip("/")]
     hosts = list(dict.fromkeys(hosts))
     code = (WIDGET_DIR / template).read_text(encoding="utf-8").replace(
         "/*__HOSTS__*/[]", json.dumps(hosts)
     )
+    for placeholder, value in replacements.items():
+        code = code.replace(placeholder, value)
     return Response(
         content=code,
         media_type="text/javascript; charset=utf-8",
