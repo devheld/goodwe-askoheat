@@ -223,6 +223,9 @@ def _widget_payload() -> tuple[dict, dict]:
     }, today
 
 
+AVG_WINDOW_S = 300
+
+
 @app.get("/api/widget/graph")
 async def widget_graph() -> dict:
     """The phone widget's numbers plus what its charts need.
@@ -245,10 +248,18 @@ async def widget_graph() -> dict:
     now = datetime.now().astimezone()
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     soc_by_hour: dict[int, float] = {}
+    recent: list[dict] = []
     for row in store.history(ceil((now - midnight).total_seconds() / 3600) + 1):
         ts = datetime.fromisoformat(row["timestamp"]).astimezone()
         if ts >= midnight and row.get("battery_soc_pct") is not None:
             soc_by_hour[ts.hour] = row["battery_soc_pct"]
+        if (now - ts).total_seconds() <= AVG_WINDOW_S:
+            recent.append(row)
+    # The last five minutes' mean beside the instantaneous values, for a
+    # widget that shows a kW figure next to kWh: a rate over an interval.
+    for key, col in (("consumption_avg_kw", "consumption_kw"), ("pv_avg_kw", "pv_kw")):
+        vals = [r[col] for r in recent if r.get(col) is not None]
+        payload[key] = round(sum(vals) / len(vals), 3) if vals else None
     payload["hours"] = [
         {
             "h": int(b["bucket"][-2:]),

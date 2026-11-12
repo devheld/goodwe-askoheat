@@ -1244,8 +1244,12 @@ see, is a status in the header only.
 where iOS shows it at about twice its size on black. It is one picture: a
 24-hour dial with noon at the top, each hour's PV growing out of the ring
 and its consumption into it by origin, a dot at the current time, the
-battery as an inner ring, the current PV (or demand, without sun) in the
-middle, and today's yield and the battery level in the lower corners.
+battery as an inner ring and the current PV in the middle (without sun,
+the battery or the grid, whichever supplies more). The corners hold kW
+on the left and kWh on the right: battery and today's yield above, the
+house's consumption below - as the mean of the last five minutes
+(`consumption_avg_kw` in `/api/widget/graph`, beside `pv_avg_kw`) and
+today's total. The rays are scaled together so none reaches a corner.
 
 The port must not be opened to the internet for this: the API has no
 login. A VPN is the way in.

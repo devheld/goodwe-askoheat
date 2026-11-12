@@ -853,7 +853,7 @@ function hourlyCard(parent, d, width, height, withSoc) {
 // of the ring, its consumption into it, coloured by where it came from -
 // the hourly chart bent into a circle, on one scale. The ring is brighter
 // up to now and a dot marks the moment. Inside: the battery as a ring and
-// the one number that matters now. Below: today's yield and the battery.
+// the one number that matters now. The corners: kW left, kWh right.
 const SB = 2;
 
 function hourAngle(h) {
@@ -879,37 +879,88 @@ function standbyImage(d, state, size) {
   ctx.size = new Size(size * SB, size * SB);
   ctx.opaque = false;
   ctx.respectScreenScale = true;
-  const c = (size / 2) * SB;
-  const r = (f) => size * f * SB;
-  const rBase = r(0.33);
-  const rOut = r(0.485);
-  const rIn = r(0.24);
-  const battOut = r(0.214);
-  const battIn = battOut - 3.5 * SB;
+  // Geometry in points; multiplied by SB only when drawn.
+  const m = size / 2;
+  const rBase = size * 0.27;
+  const rOut = size * 0.47;
+  const rIn = size * 0.18;
+  const battOut = size * 0.165;
+  const battIn = battOut - 3;
   const hw = (1.25 * Math.PI) / 180; // half the gap between two hours
+  const seg = (ro, ri, a0, a1, color) => ringSegment(ctx, m * SB, m * SB, ro * SB, ri * SB, a0, a1, color);
 
-  // The hours: generation outward, consumption inward by origin.
+  // The four corners, inset for the widget's rounded corners: kW on the
+  // left, kWh on the right; the battery and today's yield above, what the
+  // house uses below. Their boxes are kept clear of the sun's rays.
+  const t = d.today || {};
+  const CW = 52;
+  const CH = 27;
+  const IN_X = 10;
+  const IN_Y = 7;
+  const corners = [
+    { x: IN_X, y: IN_Y, v: pct(d.battery_soc_pct).replace(" ", ""), label: "Akku", align: "left", w: 34 },
+    { x: size - IN_X - CW, y: IN_Y, v: kwh(t.pv_kwh), label: "kWh PV", align: "right", w: 32 },
+    { x: IN_X, y: size - IN_Y - CH, v: kw(has(d.consumption_avg_kw) ? d.consumption_avg_kw : d.consumption_kw), label: "kW ⌀5 min", align: "left", w: 46 },
+    { x: size - IN_X - CW, y: size - IN_Y - CH, v: kwh(t.consumption_kwh), label: "kWh Verbr.", align: "right", w: 48 },
+  ];
+  // The box each corner's text actually covers, plus a little air.
+  const boxes = corners.map((k) => {
+    const x0 = k.align === "left" ? k.x : k.x + CW - k.w;
+    return { x0: x0 - 2, y0: k.y - 2, x1: x0 + k.w + 2, y1: k.y + CH + 2 };
+  });
+  // How far a ray from the middle at angle a gets before it enters a box.
+  const reach = (a) => {
+    const dx = Math.sin(a);
+    const dy = -Math.cos(a);
+    let best = Infinity;
+    for (const b of boxes) {
+      let t0 = 0;
+      let t1 = Infinity;
+      for (const [o, dd, lo, hi] of [[m, dx, b.x0, b.x1], [m, dy, b.y0, b.y1]]) {
+        if (Math.abs(dd) < 1e-9) {
+          if (o < lo || o > hi) t0 = Infinity;
+          continue;
+        }
+        const ta = (lo - o) / dd;
+        const tb = (hi - o) / dd;
+        t0 = Math.max(t0, Math.min(ta, tb));
+        t1 = Math.min(t1, Math.max(ta, tb));
+      }
+      if (t0 <= t1) best = Math.min(best, t0);
+    }
+    return best;
+  };
+
+  // The hours: generation outward, consumption inward by origin, all on
+  // one scale - the largest that keeps every ray inside the dial and out
+  // of the corners.
   const rows = (d.hours || []).map((x) => ({
     h: x.h,
     gen: Math.max(0, x.pv || 0),
     ...origin(x.consumption, x.import, x.discharge),
   }));
-  const maxUp = Math.max(0, ...rows.map((x) => x.gen));
-  const maxDown = Math.max(0, ...rows.map((x) => x.pv + x.batt + x.grid));
-  const roomUp = rOut - rBase - SB;
-  const roomDown = rBase - rIn - SB;
-  const k = Math.min(maxUp > 0 ? roomUp / maxUp : Infinity, maxDown > 0 ? roomDown / maxDown : Infinity);
-  if (isFinite(k)) {
+  let k = Infinity;
+  for (const x of rows) {
+    if (x.gen > 0) {
+      const a0 = hourAngle(x.h) + hw;
+      const a1 = hourAngle(x.h + 1) - hw;
+      const room = Math.min(rOut, reach(a0), reach((a0 + a1) / 2), reach(a1)) - rBase - 1;
+      k = Math.min(k, Math.max(0, room) / x.gen);
+    }
+    const down = x.pv + x.batt + x.grid;
+    if (down > 0) k = Math.min(k, (rBase - rIn - 1) / down);
+  }
+  if (isFinite(k) && k > 0) {
     for (const x of rows) {
       const a0 = hourAngle(x.h) + hw;
       const a1 = hourAngle(x.h + 1) - hw;
       const up = x.gen * k;
-      if (up >= 0.5 * SB) ringSegment(ctx, c, c, rBase + SB + up, rBase + SB, a0, a1, S.pv);
-      let from = rBase - SB;
+      if (up >= 0.5) seg(rBase + 1 + up, rBase + 1, a0, a1, S.pv);
+      let from = rBase - 1;
       for (const [v, color] of [[x.pv, S.pv], [x.batt, S.batt], [x.grid, S.grid]]) {
         const span = v * k;
-        if (span < 0.5 * SB) continue;
-        ringSegment(ctx, c, c, from, from - span + (span > 3 * SB ? SB : 0), a0, a1, color);
+        if (span < 0.5) continue;
+        seg(from, from - span + (span > 3 ? 1 : 0), a0, a1, color);
         from -= span;
       }
     }
@@ -918,38 +969,37 @@ function standbyImage(d, state, size) {
   // The ring: the day so far brighter, then the dot for now.
   const now = new Date();
   const nowH = now.getHours() + now.getMinutes() / 60;
-  ringSegment(ctx, c, c, rBase + 0.6 * SB, rBase - 0.6 * SB, 0, 2 * Math.PI, S.track);
-  ringSegment(ctx, c, c, rBase + 0.6 * SB, rBase - 0.6 * SB, hourAngle(0), hourAngle(nowH), S.axis);
+  seg(rBase + 0.6, rBase - 0.6, 0, 2 * Math.PI, S.track);
+  seg(rBase + 0.6, rBase - 0.6, hourAngle(0), hourAngle(nowH), S.axis);
   const na = hourAngle(nowH);
-  const dot = 3.5 * SB;
+  const dot = 3.5;
   ctx.setFillColor(S.ink);
-  ctx.fillEllipse(new Rect(c + rBase * Math.sin(na) - dot, c - rBase * Math.cos(na) - dot, 2 * dot, 2 * dot));
+  ctx.fillEllipse(new Rect((m + rBase * Math.sin(na) - dot) * SB, (m - rBase * Math.cos(na) - dot) * SB, 2 * dot * SB, 2 * dot * SB));
 
   // The battery.
   const soc = Math.max(0, Math.min(100, d.battery_soc_pct || 0)) / 100;
-  ringSegment(ctx, c, c, battOut, battIn, 0, 2 * Math.PI, S.track);
-  ringSegment(ctx, c, c, battOut, battIn, 0, soc * 2 * Math.PI, S.batt);
+  seg(battOut, battIn, 0, 2 * Math.PI, S.track);
+  seg(battOut, battIn, 0, soc * 2 * Math.PI, S.batt);
 
-  // The middle: the sun while it delivers, otherwise what the house draws.
-  const cx = size / 2;
-  const sun = (d.pv_kw || 0) >= 0.05;
+  // The middle: the sun while it delivers, otherwise whichever of battery
+  // and grid supplies the house more.
   const f = freshness(state);
-  const big = Font.boldRoundedSystemFont(22 * SB);
-  const small = Font.mediumSystemFont(10 * SB);
-  const value = Font.semiboldRoundedSystemFont(14 * SB);
-  sbText(ctx, sun ? "Sonne" : "Bedarf", cx - 25, cx - 24, 50, 13, small, S.ink2, "center");
-  sbText(ctx, bigNumber(sun ? d.pv_kw : d.consumption_kw), cx - 30, cx - 14, 60, 28, big, S.ink, "center");
-  sbText(ctx, f.warn ? clock(parseTs(d.timestamp)) : "kW", cx - 25, cx + 12, 50, 13, small, f.warn ? new Color("#ff9f0a") : S.ink2, "center");
+  const big = Font.boldRoundedSystemFont(18 * SB);
+  const tiny = Font.mediumSystemFont(9 * SB);
+  const value = Font.semiboldRoundedSystemFont(13 * SB);
+  const pvNow = has(d.pv_avg_kw) ? d.pv_avg_kw : d.pv_kw || 0;
+  const discharge = Math.max(0, -(d.battery_kw || 0));
+  const imp = d.grid_import_kw || 0;
+  const [name, v] =
+    pvNow >= 0.05 ? ["Sonne", pvNow] : discharge >= imp ? ["Akku", discharge] : ["Netz", imp];
+  sbText(ctx, name, m - 20, m - 19, 40, 11, tiny, S.ink2, "center");
+  sbText(ctx, bigNumber(v), m - 22, m - 11, 44, 22, big, S.ink, "center");
+  sbText(ctx, f.warn ? clock(parseTs(d.timestamp)) : "kW", m - 20, m + 8, 40, 11, tiny, f.warn ? new Color("#ff9f0a") : S.ink2, "center");
 
-  // The two lower corners, which the dial leaves free (no sun at night):
-  // today's yield and the battery. Inset for the widget's rounded corners.
-  const t = d.today || {};
-  const corner = (x, v, label, align) => {
-    sbText(ctx, v, x, size - 39, 40, 17, value, S.ink, align);
-    sbText(ctx, label, x, size - 23, 40, 13, small, S.ink2, align);
-  };
-  corner(12, kwh(t.pv_kwh), "kWh PV", "left");
-  corner(size - 52, pct(d.battery_soc_pct).replace(" ", ""), "Akku", "right");
+  for (const c of corners) {
+    sbText(ctx, c.v, c.x, c.y, CW, 16, value, S.ink, c.align);
+    sbText(ctx, c.label, c.x, c.y + 15, CW, 12, tiny, S.ink2, c.align);
+  }
   return ctx.getImage();
 }
 
