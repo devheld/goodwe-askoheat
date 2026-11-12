@@ -119,6 +119,10 @@ function usePalette(dark) {
   S.track = new Color("#8e8e93", dark ? 0.3 : 0.22);
   S.axis = new Color("#8e8e93", 0.7);
   S.socFill = new Color(p.batt, 0.18);
+  // Text drawn into chart images: dynamic colours don't resolve there.
+  S.ink = new Color(dark ? "#f2f2f7" : "#1c1c1e");
+  S.ink2 = new Color(dark ? "#98989f" : "#6e6e73");
+  S.tile = new Color(dark ? "#2c2c2e" : "#f2f2f7");
 }
 
 // One size per kind of text, as in "Energie".
@@ -363,8 +367,8 @@ function hourlyImage(w, h, hours) {
   const maxDown = Math.max(0, ...rows.map((r) => r.pv + r.batt + r.grid));
   if (maxUp + maxDown <= 0) {
     ctx.setFillColor(S.axis);
-    ctx.fillRect(new Rect(0, h / 2, w, 1));
-    return ctx.getImage();
+    ctx.fillRect(new Rect(0, Math.round(h / 2), w, 1));
+    return { image: ctx.getImage(), base: Math.round(h / 2), gen: false };
   }
   // One scale above and below the line: a kWh is the same height on
   // either side, so the line sits where the two maxima put it.
@@ -396,6 +400,38 @@ function hourlyImage(w, h, hours) {
   }
   ctx.setFillColor(S.axis);
   ctx.fillRect(new Rect(0, base, w, 1));
+  return { image: ctx.getImage(), base, gen: maxUp > 0 };
+}
+
+const LABEL_H = 14; // one line of 11 pt text drawn into an image
+
+function drawLabel(ctx, str, x, y, w, align, color, font) {
+  ctx.setFont(font || F.label);
+  ctx.setTextColor(color || S.ink2);
+  if (align === "right") ctx.setTextAlignedRight();
+  else ctx.setTextAlignedLeft();
+  ctx.drawTextInRect(str, new Rect(x, y, w, LABEL_H));
+}
+
+// The words beside the hourly chart, on either side of its line.
+function hourlyGutterImage(w, h, base, gen) {
+  const ctx = canvas(w, h);
+  const inner = w - 4;
+  let below = Math.min(h - LABEL_H, base + 1);
+  if (gen) {
+    const above = Math.max(0, Math.min(base - LABEL_H, below - LABEL_H));
+    drawLabel(ctx, "Erzeugt", 0, above, inner, "right");
+    below = Math.max(below, above + LABEL_H);
+  }
+  drawLabel(ctx, "Verbrauch", 0, below, inner, "right");
+  return ctx.getImage();
+}
+
+// The scale of the battery strip: 100 % at its top, 0 % at its foot.
+function socGutterImage(w, h) {
+  const ctx = canvas(w, h);
+  drawLabel(ctx, "100 %", 0, -1, w - 4, "right");
+  drawLabel(ctx, "0 %", 0, h - LABEL_H + 1, w - 4, "right");
   return ctx.getImage();
 }
 
@@ -406,6 +442,8 @@ function socImage(w, h, hours) {
   const slot = w / 24;
   ctx.setFillColor(S.track);
   ctx.fillRect(new Rect(0, h - 1, w, 1));
+  ctx.fillRect(new Rect(0, 0, w, 1));
+  const last = (hours || []).filter((x) => has(x.soc)).pop();
   const pts = (hours || [])
     .filter((x) => has(x.soc))
     .map((x) => new Point((x.h + 0.5) * slot, 1 + (h - 2) * (1 - Math.max(0, Math.min(100, x.soc)) / 100)));
@@ -418,6 +456,28 @@ function socImage(w, h, hours) {
   ctx.setStrokeColor(S.batt);
   ctx.setLineWidth(2);
   ctx.strokePath();
+
+  // Where it stands now: a dot on the end of the line and the number.
+  const end = pts[pts.length - 1];
+  ctx.setFillColor(S.batt);
+  ctx.fillEllipse(new Rect(end.x - 3.5, end.y - 3.5, 7, 7));
+  const text = `Akku ${Math.round(last.soc)} %`;
+  const tw = 70;
+  const y = Math.max(0, Math.min(h - LABEL_H, end.y - LABEL_H / 2));
+  // Late in the day there is no room after the line: put it before,
+  // above the line, or under it when the line runs along the top. A
+  // patch of tile colour keeps the line from running through it.
+  const after = end.x + 6 + tw <= w;
+  const tx = after ? end.x + 6 : end.x - 6 - tw;
+  const ty = after ? y : end.y - 2 - LABEL_H >= 0 ? end.y - 2 - LABEL_H : Math.min(h - LABEL_H, end.y + 3);
+  if (!after) {
+    const halo = new Path();
+    halo.addRoundedRect(new Rect(tx + tw - 58, ty, 58, LABEL_H), 4, 4);
+    ctx.addPath(halo);
+    ctx.setFillColor(S.tile);
+    ctx.fillPath();
+  }
+  drawLabel(ctx, text, tx, ty, tw, after ? "left" : "right", S.ink, F.value);
   return ctx.getImage();
 }
 
@@ -714,7 +774,7 @@ function batteryWideCard(parent, d, width, height) {
   row("Heute entladen", `${kwh(t.battery_discharge_kwh)} kWh`, F.label, C.ink2);
 }
 
-const GUTTER = 14;
+const GUTTER = 62; // room for "Verbrauch" beside the hourly chart
 
 function addLegend(row, items) {
   items.forEach(([label, color], i) => {
@@ -725,14 +785,10 @@ function addLegend(row, items) {
   });
 }
 
-function addGutterChart(card, image, w, h, top, bottom) {
+function addLabeledChart(card, gutterImage, image, w, h) {
   const row = card.addStack();
-  const gutter = row.addStack();
-  gutter.layoutVertically();
-  gutter.size = new Size(GUTTER, h);
-  addText(gutter, top, F.label, C.ink2, 1);
-  gutter.addSpacer();
-  if (bottom) addText(gutter, bottom, F.label, C.ink2, 1);
+  const g = row.addImage(gutterImage);
+  g.imageSize = new Size(GUTTER, h);
   const img = row.addImage(image);
   img.imageSize = new Size(w, h);
 }
@@ -765,14 +821,15 @@ function hourlyCard(parent, d, width, height, withSoc) {
   card.addSpacer(4);
 
   const chartW = width - 2 * TILE_PAD_H - GUTTER;
-  const SOC_H = 28;
+  const SOC_H = 32;
   const socBlock = withSoc ? SOC_H + 5 : 0;
   const chartH = Math.max(30, height - 16 - 15 - 4 - 3 - ROW_H - socBlock);
   // Generation is drawn above the line, consumption below it.
-  addGutterChart(card, hourlyImage(chartW, chartH, d.hours), chartW, chartH, "↑", "↓");
+  const hourly = hourlyImage(chartW, chartH, d.hours);
+  addLabeledChart(card, hourlyGutterImage(GUTTER, chartH, hourly.base, hourly.gen), hourly.image, chartW, chartH);
   if (withSoc) {
     card.addSpacer(5);
-    addGutterChart(card, socImage(chartW, SOC_H, d.hours), chartW, SOC_H, "%", null);
+    addLabeledChart(card, socGutterImage(GUTTER, SOC_H), socImage(chartW, SOC_H, d.hours), chartW, SOC_H);
   }
   card.addSpacer(3);
   addHourAxis(card, chartW);
