@@ -98,16 +98,19 @@ const C = {
 
 // The marks, one palette per appearance, each validated on its own tile
 // colour in the groups the charts show together: sources (PV, battery,
-// grid) and sinks (house, wallbox, heat pump, battery, export). The battery
+// grid) and sinks (house, wallbox, heat pump, AskoHeat, battery, export:
+// all pairs among the four loads, neighbours in the bar). The battery
 // keeps its blue in both groups because it is the same thing.
 const PALETTES = {
   light: {
     pv: "#e8860b", batt: "#2a78d6", grid: "#d6458a",
     house: "#8e8e93", wb: "#7a3fb5", hp: "#b5306b", exp: "#008300",
+    asko: "#d4a017",
   },
   dark: {
     pv: "#c86e05", batt: "#3f8ee8", grid: "#cf4f8c",
-    house: "#8e8e93", wb: "#8d5bd8", hp: "#c2416f", exp: "#2fa84f",
+    house: "#9a9aa0", wb: "#8d5bd8", hp: "#c2416f", exp: "#2fa84f",
+    asko: "#c88300",
   },
 };
 let S = null; // set once the appearance is known
@@ -582,6 +585,7 @@ const BAR_H = 10;
 function flowParts(d) {
   const hp = Math.max(0, d.heatpump_kw || 0);
   const wb = Math.max(0, d.wallbox_kw || 0);
+  const asko = Math.max(0, (d.askoheat_w || 0) / 1000);
   const battery = d.battery_kw || 0;
   return {
     from: [
@@ -589,12 +593,12 @@ function flowParts(d) {
       { label: "Akku", value: Math.max(0, -battery), color: S.batt },
       { label: "Netz", value: Math.max(0, d.grid_import_kw || 0), color: S.grid },
     ],
-    // The house figure is the rest once the metered loads are off it, so
-    // the AskoHeat heater is part of it.
+    // The house figure is the rest once the metered loads are off it.
     to: [
-      { label: "Haus", value: Math.max(0, (d.consumption_kw || 0) - hp - wb), color: S.house },
-      { label: "Wallbox", value: wb, color: S.wb },
+      { label: "Haus", value: Math.max(0, (d.consumption_kw || 0) - hp - wb - asko), color: S.house },
+      { label: "Auto", value: wb, color: S.wb },
       { label: "WP", value: hp, color: S.hp },
+      { label: "Asko", value: asko, color: S.asko },
       { label: "Akku", value: Math.max(0, battery), color: S.batt },
       { label: "Einsp.", value: Math.max(0, d.grid_export_kw || 0), color: S.exp },
     ],
@@ -678,7 +682,7 @@ function donutCard(parent, spec, width, height, maxDia) {
   body.addSpacer(gap);
   const legend = body.addStack();
   legend.layoutVertically();
-  legend.spacing = 4;
+  legend.spacing = spec.parts.length > 3 ? 2 : 4;
   // A fixed width, so the spacer in each row has room to push the number
   // to the right edge.
   legend.size = new Size(width - 2 * TILE_PAD_H - dia - gap, 0);
@@ -694,18 +698,20 @@ function donutCard(parent, spec, width, height, maxDia) {
   card.addSpacer();
 }
 
+// Today's consumption by what used it. Where it came from is in the hourly
+// chart. Loads that used nothing today are left out of ring and legend.
 function consumptionSpec(d, title) {
   const t = d.today || {};
-  const o = origin(t.consumption_kwh, t.import_kwh, t.battery_discharge_kwh);
   return {
     title,
     note: `${pct(t.autarky_pct)} autark`,
     total: t.consumption_kwh,
     parts: [
-      { label: "PV", value: o.pv, color: S.pv },
-      { label: "Akku", value: o.batt, color: S.batt },
-      { label: "Netz", value: o.grid, color: S.grid },
-    ],
+      { label: "Haus", value: t.other_kwh, color: S.house },
+      { label: "Auto", value: t.wallbox_kwh, color: S.wb },
+      { label: "WP", value: t.heatpump_kwh, color: S.hp },
+      { label: "Asko", value: t.askoheat_kwh, color: S.asko },
+    ].filter((p) => (p.value || 0) >= 0.05),
   };
 }
 
@@ -839,10 +845,31 @@ function hourlyCard(parent, d, width, height, withSoc) {
 const PAD = 12;
 const GAP = 8;
 
+// The balcony unit as a plain status: the inverter cannot see it, so it
+// is in none of the charts.
+function balconyStatus(row, d) {
+  const now = d.balcony_kw;
+  const today = (d.today || {}).balcony_kwh;
+  if (!has(now) && !has(today)) return;
+  row.addSpacer();
+  const sym = SFSymbol.named("sun.max.fill");
+  const icon = row.addImage(sym.image);
+  icon.imageSize = new Size(12, 12);
+  icon.tintColor = S.pv;
+  row.addSpacer(4);
+  addText(row, "Balkon", F.label, C.ink2);
+  row.addSpacer(4);
+  const parts = [];
+  if (has(now)) parts.push(power(now));
+  if (has(today)) parts.push(`${today.toFixed(2)} kWh`);
+  addText(row, parts.join(" · "), F.value, C.ink);
+}
+
 function header(widget, state) {
   const row = widget.addStack();
   row.centerAlignContent();
   addText(row, "Energie", F.head, C.ink);
+  balconyStatus(row, state.data);
   row.addSpacer();
   const f = freshness(state);
   addText(row, f.text, F.label, f.warn ? C.warn : C.ink2);
@@ -857,7 +884,7 @@ function build4x4(widget, d, state, W, H) {
   // The hourly chart gets what the others leave, and the middle row gives
   // way first when the flow card needs a second line of values.
   const left = H - 16 - 3 * GAP - plan.height;
-  const midH = Math.min(100, Math.max(80, left - 100));
+  const midH = Math.min(100, Math.max(94, left - 90));
   const row = widget.addStack();
   row.spacing = GAP;
   const lw = Math.round((W - GAP) * 0.6);

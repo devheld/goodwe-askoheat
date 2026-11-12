@@ -235,6 +235,11 @@ async def widget_graph() -> dict:
     totals = today["totals"]
     payload["today"]["battery_charge_kwh"] = totals["battery_charge"]
     payload["today"]["battery_discharge_kwh"] = totals["battery_discharge"]
+    # Today's consumption by load; "other" is the rest of the house.
+    payload["today"]["heatpump_kwh"] = totals["heatpump"]
+    payload["today"]["wallbox_kwh"] = totals["wallbox"]
+    payload["today"]["askoheat_kwh"] = totals["asko"]
+    payload["today"]["other_kwh"] = totals["other"]
     # The battery's charge level at the end of each hour so far: the last
     # sample in it. Readings are stored in UTC; the hours are local.
     now = datetime.now().astimezone()
