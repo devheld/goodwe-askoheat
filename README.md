@@ -1236,6 +1236,17 @@ elevation at the phone's last known position - automatic appearance
 switches at sunset and sunrise - unless the widget's parameter says
 `hell` or `dunkel`.
 
+The large charts split the flow and today's consumption by load (house,
+car, heat pump, AskoHeat). The balcony unit, which the inverter cannot
+see, is a status in the header only.
+
+`/widget/standby.js` ("Energie StandBy") is a small widget for StandBy,
+where iOS shows it at about twice its size on black. It is one picture: a
+24-hour dial with noon at the top, each hour's PV growing out of the ring
+and its consumption into it by origin, a dot at the current time, the
+battery as an inner ring, the current PV (or demand, without sun) in the
+middle, and today's yield and the battery level in the lower corners.
+
 The port must not be opened to the internet for this: the API has no
 login. A VPN is the way in.
 

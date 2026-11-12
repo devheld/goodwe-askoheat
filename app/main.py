@@ -279,6 +279,15 @@ WIDGET_SCRIPTS = {
             '/*__SCRIPT__*/"/widget/grafik.js"': '"/widget/grafik46.js"',
         },
     ),
+    # A small one drawn for StandBy, the phone on its side on the charger.
+    "standby": (
+        "grafik.js",
+        "Energie StandBy.js",
+        {
+            '/*__LAYOUT__*/"4x4"': '"2x2"',
+            '/*__SCRIPT__*/"/widget/grafik.js"': '"/widget/standby.js"',
+        },
+    ),
 }
 
 

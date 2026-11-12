@@ -26,6 +26,7 @@ const TIMEOUT_S = 8;
 const STALE_MIN = 10;
 const REFRESH_MIN = 5;
 const CACHE_FILE = "energie-grafik-cache.json";
+const TITLE = { "4x6": "Energie 4x6", "2x2": "Energie StandBy" }[LAYOUT] || "Energie Grafik";
 const LOCATION_FILE = "energie-grafik-location.json";
 
 const fm = FileManager.local();
@@ -575,6 +576,7 @@ const SIZES = [
 function widgetSize(family) {
   const sw = Device.screenSize().width;
   const [, small, wide, tall] = SIZES.find(([min]) => sw >= min);
+  if (family === "small") return new Size(small, small);
   return family === "medium" ? new Size(wide, small) : new Size(wide, tall);
 }
 
@@ -841,6 +843,125 @@ function hourlyCard(parent, d, width, height, withSoc) {
   addHourAxis(card, chartW);
 }
 
+// ------------------------------------------------------------ StandBy
+// The 2x2 for StandBy, the phone on its side on the charger: iOS shows a
+// small widget there at about twice its size, on black, red at night. So
+// it is one picture, drawn at twice the size so it stays sharp.
+//
+// A 24-hour dial with noon at the top: the sun's path runs from the left
+// (morning) over the top to the right (evening). Each hour's PV grows out
+// of the ring, its consumption into it, coloured by where it came from -
+// the hourly chart bent into a circle, on one scale. The ring is brighter
+// up to now and a dot marks the moment. Inside: the battery as a ring and
+// the one number that matters now. Below: today's yield and the battery.
+const SB = 2;
+
+function hourAngle(h) {
+  return ((h - 12) / 24) * 2 * Math.PI;
+}
+
+function sbText(ctx, str, x, y, w, h, font, color, align) {
+  ctx.setFont(font);
+  ctx.setTextColor(color);
+  if (align === "right") ctx.setTextAlignedRight();
+  else if (align === "center") ctx.setTextAlignedCenter();
+  else ctx.setTextAlignedLeft();
+  ctx.drawTextInRect(str, new Rect(x * SB, y * SB, w * SB, h * SB));
+}
+
+function bigNumber(v) {
+  const a = Math.abs(v || 0);
+  return a < 0.01 ? "0" : a < 10 ? a.toFixed(a < 1 ? 2 : 1) : String(Math.round(a));
+}
+
+function standbyImage(d, state, size) {
+  const ctx = new DrawContext();
+  ctx.size = new Size(size * SB, size * SB);
+  ctx.opaque = false;
+  ctx.respectScreenScale = true;
+  const c = (size / 2) * SB;
+  const r = (f) => size * f * SB;
+  const rBase = r(0.33);
+  const rOut = r(0.485);
+  const rIn = r(0.24);
+  const battOut = r(0.214);
+  const battIn = battOut - 3.5 * SB;
+  const hw = (1.25 * Math.PI) / 180; // half the gap between two hours
+
+  // The hours: generation outward, consumption inward by origin.
+  const rows = (d.hours || []).map((x) => ({
+    h: x.h,
+    gen: Math.max(0, x.pv || 0),
+    ...origin(x.consumption, x.import, x.discharge),
+  }));
+  const maxUp = Math.max(0, ...rows.map((x) => x.gen));
+  const maxDown = Math.max(0, ...rows.map((x) => x.pv + x.batt + x.grid));
+  const roomUp = rOut - rBase - SB;
+  const roomDown = rBase - rIn - SB;
+  const k = Math.min(maxUp > 0 ? roomUp / maxUp : Infinity, maxDown > 0 ? roomDown / maxDown : Infinity);
+  if (isFinite(k)) {
+    for (const x of rows) {
+      const a0 = hourAngle(x.h) + hw;
+      const a1 = hourAngle(x.h + 1) - hw;
+      const up = x.gen * k;
+      if (up >= 0.5 * SB) ringSegment(ctx, c, c, rBase + SB + up, rBase + SB, a0, a1, S.pv);
+      let from = rBase - SB;
+      for (const [v, color] of [[x.pv, S.pv], [x.batt, S.batt], [x.grid, S.grid]]) {
+        const span = v * k;
+        if (span < 0.5 * SB) continue;
+        ringSegment(ctx, c, c, from, from - span + (span > 3 * SB ? SB : 0), a0, a1, color);
+        from -= span;
+      }
+    }
+  }
+
+  // The ring: the day so far brighter, then the dot for now.
+  const now = new Date();
+  const nowH = now.getHours() + now.getMinutes() / 60;
+  ringSegment(ctx, c, c, rBase + 0.6 * SB, rBase - 0.6 * SB, 0, 2 * Math.PI, S.track);
+  ringSegment(ctx, c, c, rBase + 0.6 * SB, rBase - 0.6 * SB, hourAngle(0), hourAngle(nowH), S.axis);
+  const na = hourAngle(nowH);
+  const dot = 3.5 * SB;
+  ctx.setFillColor(S.ink);
+  ctx.fillEllipse(new Rect(c + rBase * Math.sin(na) - dot, c - rBase * Math.cos(na) - dot, 2 * dot, 2 * dot));
+
+  // The battery.
+  const soc = Math.max(0, Math.min(100, d.battery_soc_pct || 0)) / 100;
+  ringSegment(ctx, c, c, battOut, battIn, 0, 2 * Math.PI, S.track);
+  ringSegment(ctx, c, c, battOut, battIn, 0, soc * 2 * Math.PI, S.batt);
+
+  // The middle: the sun while it delivers, otherwise what the house draws.
+  const cx = size / 2;
+  const sun = (d.pv_kw || 0) >= 0.05;
+  const f = freshness(state);
+  const big = Font.boldRoundedSystemFont(22 * SB);
+  const small = Font.mediumSystemFont(10 * SB);
+  const value = Font.semiboldRoundedSystemFont(14 * SB);
+  sbText(ctx, sun ? "Sonne" : "Bedarf", cx - 25, cx - 24, 50, 13, small, S.ink2, "center");
+  sbText(ctx, bigNumber(sun ? d.pv_kw : d.consumption_kw), cx - 30, cx - 14, 60, 28, big, S.ink, "center");
+  sbText(ctx, f.warn ? clock(parseTs(d.timestamp)) : "kW", cx - 25, cx + 12, 50, 13, small, f.warn ? new Color("#ff9f0a") : S.ink2, "center");
+
+  // The two lower corners, which the dial leaves free (no sun at night):
+  // today's yield and the battery. Inset for the widget's rounded corners.
+  const t = d.today || {};
+  const corner = (x, v, label, align) => {
+    sbText(ctx, v, x, size - 39, 40, 17, value, S.ink, align);
+    sbText(ctx, label, x, size - 23, 40, 13, small, S.ink2, align);
+  };
+  corner(12, kwh(t.pv_kwh), "kWh PV", "left");
+  corner(size - 52, pct(d.battery_soc_pct).replace(" ", ""), "Akku", "right");
+  return ctx.getImage();
+}
+
+function buildStandby(widget, state, size) {
+  widget.setPadding(0, 0, 0, 0);
+  widget.backgroundColor = new Color("#000000");
+  // A content image, not a background: StandBy may drop backgrounds.
+  const img = widget.addImage(standbyImage(state.data, state, size.width));
+  img.imageSize = size;
+  img.centerAlignImage();
+}
+
 // ------------------------------------------------------------ layouts
 const PAD = 12;
 const GAP = 8;
@@ -923,14 +1044,20 @@ function build(family, state) {
   widget.backgroundColor = C.bg;
   widget.refreshAfterDate = new Date(Date.now() + REFRESH_MIN * 60 * 1000);
   const fits =
-    LAYOUT === "4x6" ? family === "large" || family === "medium" : family === "large";
+    LAYOUT === "4x6"
+      ? family === "large" || family === "medium"
+      : LAYOUT === "2x2"
+        ? family === "small"
+        : family === "large";
   if (!fits) {
-    addText(widget, LAYOUT === "4x6" ? "Energie 4x6" : "Energie Grafik", F.title, C.ink);
+    addText(widget, TITLE, F.title, C.ink);
     widget.addSpacer(4);
     const t = widget.addText(
       LAYOUT === "4x6"
         ? "Groß (4x4) oben, Mittel (4x2) darunter."
-        : "Für die Größe Groß (4x4) gebaut."
+        : LAYOUT === "2x2"
+          ? "Für die Größe Klein (2x2) gebaut."
+          : "Für die Größe Groß (4x4) gebaut."
     );
     t.font = F.label;
     t.textColor = C.ink2;
@@ -945,8 +1072,12 @@ function build(family, state) {
     return widget;
   }
   widget.url = `${state.host}/`;
-  widget.setPadding(PAD, PAD, PAD, PAD);
   const size = widgetSize(family);
+  if (LAYOUT === "2x2") {
+    buildStandby(widget, state, size);
+    return widget;
+  }
+  widget.setPadding(PAD, PAD, PAD, PAD);
   const W = size.width - 2 * PAD;
   const H = size.height - 2 * PAD;
   if (LAYOUT !== "4x6") build4x4(widget, state.data, state, W, H);
@@ -997,7 +1128,10 @@ const UPDATE_TEXT = {
   skipped: "",
 };
 
-usePalette(await darkAppearance());
+// StandBy is always dark; "hell" as parameter for a light home screen.
+usePalette(
+  LAYOUT === "2x2" ? !String(config.widgetParameter || "").toLowerCase().includes("hell") : await darkAppearance()
+);
 const state = await load();
 const update = state && !state.offline ? await selfUpdate(state.host, inApp) : "offline";
 
@@ -1005,13 +1139,19 @@ if (!inApp) {
   Script.setWidget(build(config.widgetFamily || "large", state));
 } else {
   const note = new Alert();
-  note.title = LAYOUT === "4x6" ? "Energie 4x6" : "Energie Grafik";
+  note.title = TITLE;
   note.message = UPDATE_TEXT[update] || "";
-  note.addAction("Vorschau Groß");
-  if (LAYOUT === "4x6") note.addAction("Vorschau Mittel");
-  note.addCancelAction("Fertig");
-  const choice = await note.presentAlert();
-  if (choice === 0) await build("large", state).presentLarge();
-  if (choice === 1) await build("medium", state).presentMedium();
+  if (LAYOUT === "2x2") {
+    note.addAction("Vorschau Klein");
+    note.addCancelAction("Fertig");
+    if ((await note.presentAlert()) === 0) await build("small", state).presentSmall();
+  } else {
+    note.addAction("Vorschau Groß");
+    if (LAYOUT === "4x6") note.addAction("Vorschau Mittel");
+    note.addCancelAction("Fertig");
+    const choice = await note.presentAlert();
+    if (choice === 0) await build("large", state).presentLarge();
+    if (choice === 1) await build("medium", state).presentMedium();
+  }
 }
 Script.complete();
