@@ -37,6 +37,29 @@
   </div>
 
   <div class="chart-card">
+    <h2>Where the charging came from</h2>
+    <div class="range-row" id="chargeView">
+      <button data-view="day" aria-pressed="true">By day</button>
+      <button data-view="session">By session</button>
+    </div>
+    <p class="zoom-hint">
+      Each bar split by what was supplying the house while the car drew:
+      straight off the roof, out of the battery, or bought - pro rata on
+      the whole supply. CHF is what the bought part cost; the tooltip
+      also prices the rest. A session over midnight is one bar here and
+      two in the day view; the totals are the same.
+    </p>
+    <p class="chart-verdict" id="sourceVerdict"></p>
+    <div class="legend" id="sourceLegend"></div>
+    <div id="sourceChart"></div>
+    <p class="chart-note" id="sessionNote"></p>
+    <details class="table-view">
+      <summary>Table view</summary>
+      <div id="sourceTable"></div>
+    </details>
+  </div>
+
+  <div class="chart-card">
     <h2>Three witnesses</h2>
     <p class="chart-note">
       The same energy, measured three ways: the clamp meter on the charger's
@@ -46,24 +69,6 @@
       not establish.
     </p>
     <div id="crosscheckBody"></div>
-  </div>
-
-  <div class="chart-card">
-    <h2>Where the charging came from</h2>
-    <p class="zoom-hint">
-      Each day's charging split by what was supplying the house at the
-      moment it flowed: straight off the roof, out of the battery, or
-      bought. Pro rata on the whole supply - no rule for deciding which
-      kWh the car got is a measurement, and this is the convention the
-      rest of the pages use.
-    </p>
-    <p class="chart-verdict" id="sourceVerdict"></p>
-    <div class="legend" id="sourceLegend"></div>
-    <div id="sourceChart"></div>
-    <details class="table-view">
-      <summary>Table view</summary>
-      <div id="sourceTable"></div>
-    </details>
   </div>
 
   <div class="chart-card" id="iceCard" hidden>
@@ -85,13 +90,6 @@
   </div>
 
   <div class="chart-card">
-    <h2>Charging sessions</h2>
-    <p class="chart-note" id="sessionNote">Last 30 days, rebuilt from the recorded samples.</p>
-    <div id="chartSessions"></div>
-    <details class="table-view" open><summary>Session list</summary><div id="tableSessions"></div></details>
-  </div>
-
-  <div class="chart-card">
     <h2>Events</h2>
     <p class="chart-note">One entry per state change, not per poll.</p>
     <ul class="events" id="eventList"></ul>
@@ -107,7 +105,7 @@
      number of digits, so the two agree. -->
 <script src="/static/vendor/d3.v7.min.js"></script>
 <script src="/static/chartkit.js?v=2"></script>
-<script src="/static/sessions.js?v=10"></script>
+<script src="/static/sessions.js?v=11"></script>
 <script src="/static/app.js?v=28"></script>
 </body>
 </html>

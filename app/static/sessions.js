@@ -33,52 +33,102 @@ const SOURCE_PARTS = [
   { key: "grid", name: "Bought from the grid", color: "--series-grid" },
 ];
 
-function renderSources(src) {
+// One chart for both views, so the two can never disagree: a row is a
+// day or a session, and either way it is split by source and labelled
+// with its kWh and what the bought part cost.
+let chargeView = "day";
+
+function importRate(src) {
+  return (src && src.import_chf_per_kwh) || chartTariff.import_per_kwh || 0;
+}
+
+function chargeRows(runs) {
+  const src = runs.sources || {};
+  if (chargeView === "session") {
+    return (runs.sessions || []).slice(0, 20).map((s) => {
+      const start = new Date(s.start);
+      return {
+        label: start.toLocaleString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        title:
+          start.toLocaleString("en-GB") +
+          ` · ${fmt(s.duration_min, 0)} min · peak ${fmt(s.peak_kw, 1)} kW` +
+          (s.measured ? "" : " · reconstructed"),
+        pv: s.pv_kwh || 0,
+        battery: s.battery_kwh || 0,
+        grid: s.grid_kwh || 0,
+        kwh: s.energy_kwh || 0,
+      };
+    });
+  }
+  // Newest first, same as the session view.
+  return (src.by_day || [])
+    .filter((d) => d.kwh > 0.05)
+    .slice(-20)
+    .reverse()
+    .map((d) => {
+      const when = new Date(`${d.day}T12:00:00`);
+      return {
+        label: when.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "2-digit" }),
+        title: when.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }),
+        pv: d.pv || 0,
+        battery: d.battery || 0,
+        grid: d.grid || 0,
+        kwh: d.kwh || 0,
+      };
+    });
+}
+
+function renderSources(runs) {
   const chart = document.getElementById("sourceChart");
   const verdict = document.getElementById("sourceVerdict");
   const table = document.getElementById("sourceTable");
   const legend = document.getElementById("sourceLegend");
-  if (!chart) return;
+  const note = document.getElementById("sessionNote");
+  if (!chart || !runs) return;
+  const src = runs.sources;
+  const rate = importRate(src);
+  const chf = (kwh) => money((kwh || 0) * rate);
   if (!src || !src.kwh) {
     chart.innerHTML =
       '<div class="empty-state">No charging recorded yet - this fills up once a car charges.</div>';
-    if (verdict) verdict.textContent = "";
-    if (table) table.innerHTML = "";
-    if (legend) legend.innerHTML = "";
+    for (const n of [verdict, table, legend, note]) if (n) n.innerHTML = "";
     return;
   }
 
-  const pct = (v) => (100 * v) / src.kwh;
+  const pct = (v, of) => (of ? (100 * v) / of : 0);
   const own = src.pv_kwh + src.battery_kwh;
   if (verdict) {
     verdict.innerHTML =
-      `<strong>${fmt(src.kwh, 1)} kWh into the car</strong>: ` +
-      `${fmt(pct(src.pv_kwh), 0)}% straight off the roof, ` +
-      `${fmt(pct(src.battery_kwh), 0)}% out of the battery, ` +
-      `${fmt(pct(src.grid_kwh), 0)}% bought. ` +
-      `${fmt(own, 1)} kWh never went through a meter.`;
+      `<strong>${fmt(src.kwh, 1)} kWh into the car, ${chf(src.grid_kwh)} paid</strong>: ` +
+      `${fmt(pct(src.pv_kwh, src.kwh), 0)}% roof, ` +
+      `${fmt(pct(src.battery_kwh, src.kwh), 0)}% battery, ` +
+      `${fmt(pct(src.grid_kwh, src.kwh), 0)}% bought. ` +
+      `The ${fmt(own, 1)} kWh of your own would have cost ${chf(own)} more.`;
   }
   if (legend) renderLegend(legend, SOURCE_PARTS);
 
-  // Newest first, same as the session list below it.
-  const days = (src.by_day || []).filter((d) => d.kwh > 0.05).slice(-20).reverse();
+  const rows = chargeRows(runs);
   const width = chartWidth(chart);
   const narrow = width < 560;
   const rowH = 26;
-  const padL = narrow ? 58 : 96;
-  const padR = narrow ? 56 : 92;
+  const padL = chargeView === "session" ? (narrow ? 82 : 96) : narrow ? 76 : 96;
+  const padR = narrow ? 104 : 150;
   const padT = 8;
   chart.innerHTML = "";
-  const svg = newSvg(chart, width, days.length * rowH + 16);
+  const svg = newSvg(chart, width, rows.length * rowH + 16);
   const x = d3
     .scaleLinear()
-    .domain([0, d3.max(days, (d) => d.kwh) * 1.05 || 1])
+    .domain([0, d3.max(rows, (d) => d.kwh) * 1.02 || 1])
     .range([padL, width - padR]);
   const span = (v) => x(v) - x(0);
 
-  days.forEach((d, i) => {
+  rows.forEach((d, i) => {
     const y = padT + i * rowH;
-    const when = new Date(`${d.day}T12:00:00`);
     svg
       .append("text")
       .attr("x", padL - 10)
@@ -86,17 +136,27 @@ function renderSources(src) {
       .attr("text-anchor", "end")
       .attr("font-size", 11)
       .attr("fill", cssVar("--text-secondary"))
-      .text(
-        when.toLocaleDateString("en-GB", {
-          weekday: narrow ? undefined : "short",
-          day: "2-digit",
-          month: "2-digit",
-        })
+      .text(d.label);
+
+    const tip = (event) =>
+      showTip(
+        tipRows(d.title, [
+          ...SOURCE_PARTS.map((part) => ({
+            color: part.color,
+            label: part.name,
+            value: `${fmt(d[part.key], 2)} kWh · ${chf(d[part.key])} (${fmt(
+              pct(d[part.key], d.kwh),
+              0
+            )}%)`,
+          })),
+          { label: "Total", value: `${fmt(d.kwh, 2)} kWh · ${chf(d.grid)} paid` },
+        ]),
+        event
       );
 
     let cursor = padL;
     for (const part of SOURCE_PARTS) {
-      const w = span(d[part.key] || 0);
+      const w = span(d[part.key]);
       if (w < 0.6) continue;
       svg
         .append("rect")
@@ -107,26 +167,19 @@ function renderSources(src) {
         .attr("y", y + 5)
         .attr("height", rowH - 12)
         .attr("rx", 3)
-        .attr("fill", cssVar(part.color))
-        .on("mousemove", (event) =>
-          showTip(
-            tipRows(when.toLocaleDateString("en-GB"), [
-              {
-                color: part.color,
-                label: part.name,
-                value: `${fmt(d[part.key], 2)} kWh (${fmt(
-                  (100 * d[part.key]) / d.kwh,
-                  0
-                )}%)`,
-              },
-              { label: "That day", value: `${fmt(d.kwh, 2)} kWh` },
-            ]),
-            event
-          )
-        )
-        .on("mouseleave", hideTip);
+        .attr("fill", cssVar(part.color));
       cursor += w;
     }
+    // One hit target per row, the whole width: the tooltip lists all three.
+    svg
+      .append("rect")
+      .attr("x", 0)
+      .attr("y", y)
+      .attr("width", width)
+      .attr("height", rowH)
+      .attr("fill", "transparent")
+      .on("mousemove", tip)
+      .on("mouseleave", hideTip);
 
     svg
       .append("text")
@@ -134,32 +187,46 @@ function renderSources(src) {
       .attr("y", y + rowH / 2 + 3)
       .attr("font-size", 11)
       .attr("fill", cssVar("--text-secondary"))
+      .attr("pointer-events", "none")
       .text(
         narrow
-          ? `${fmt(d.kwh, 1)} kWh`
-          : `${fmt(d.kwh, 1)} kWh · ${fmt(
-              (100 * (d.pv + d.battery)) / d.kwh,
-              0
-            )}% own`
+          ? `${fmt(d.kwh, 1)} kWh · ${chf(d.grid)}`
+          : `${fmt(d.kwh, 1)} kWh · ${chf(d.grid)} · ${fmt(pct(d.pv + d.battery, d.kwh), 0)}% own`
       );
   });
 
+  if (note) {
+    const reconstructed = (runs.sessions || []).length - (runs.measured_count || 0);
+    note.textContent =
+      `Last ${runs.days} days: ${fmt(runs.total_kwh, 1)} kWh in ${(runs.sessions || []).length} session(s). ` +
+      (reconstructed === 0
+        ? "All measured by the clamp meter on the charger's feed."
+        : (runs.measured_count || 0) === 0
+        ? "All reconstructed from the charger's counter, from before the clamp meter went in."
+        : `${runs.measured_count} measured by the clamp meter (${fmt(
+            runs.measured_kwh,
+            1
+          )} kWh), ${reconstructed} reconstructed from the charger's counter from before it went in.`);
+  }
+
   if (table) {
-    const saving = (src.public_chf_per_kwh || 0) - (src.import_chf_per_kwh || 0);
+    const saving = (src.public_chf_per_kwh || 0) - rate;
+    const head = chargeView === "session" ? "Session" : "Day";
     table.innerHTML = `
       <table class="data">
         <thead><tr>
-          <th>Day</th><th>Roof</th><th>Battery</th><th>Grid</th><th>Total</th><th>Self-supplied</th>
+          <th>${head}</th><th>Roof kWh</th><th>Battery kWh</th><th>Grid kWh</th><th>Total kWh</th><th>Paid</th><th>Own</th>
         </tr></thead>
-        <tbody>${days
+        <tbody>${rows
           .map(
             (d) => `<tr>
-              <td>${new Date(`${d.day}T12:00:00`).toLocaleDateString("en-GB")}</td>
+              <td>${d.title}</td>
               <td>${fmt(d.pv, 2)}</td>
               <td>${fmt(d.battery, 2)}</td>
               <td>${fmt(d.grid, 2)}</td>
-              <td>${fmt(d.kwh, 2)} kWh</td>
-              <td>${fmt((100 * (d.pv + d.battery)) / d.kwh, 0)}%</td>
+              <td>${fmt(d.kwh, 2)}</td>
+              <td>${chf(d.grid)}</td>
+              <td>${fmt(pct(d.pv + d.battery, d.kwh), 0)}%</td>
             </tr>`
           )
           .join("")}
@@ -168,27 +235,33 @@ function renderSources(src) {
             <td><strong>${fmt(src.pv_kwh, 2)}</strong></td>
             <td><strong>${fmt(src.battery_kwh, 2)}</strong></td>
             <td><strong>${fmt(src.grid_kwh, 2)}</strong></td>
-            <td><strong>${fmt(src.kwh, 2)} kWh</strong></td>
-            <td><strong>${fmt(pct(own), 0)}%</strong></td>
+            <td><strong>${fmt(src.kwh, 2)}</strong></td>
+            <td><strong>${chf(src.grid_kwh)}</strong></td>
+            <td><strong>${fmt(pct(own, src.kwh), 0)}%</strong></td>
           </tr>
         </tbody>
       </table>
       <p class="chart-note">
-        What the mix is worth: a kWh the roof or the battery supplied saves
-        the whole ${fmt(src.public_chf_per_kwh, 2)} a public charger would
-        have charged for it, a bought one saves
-        ${fmt(src.public_chf_per_kwh, 2)} less the
-        ${fmt(src.import_chf_per_kwh, 2)} it cost, so
-        ${fmt(saving, 2)}. The counter on the energy page already splits it
-        exactly that way - the ${fmt(src.import_chf_per_kwh, 2)} of a
-        self-supplied kWh is credited to the roof in the solar stream and
-        the ${fmt(saving, 2)} on top of it to the charger - which is why
-        this mix moves money between the two paybacks but never changes
-        the total. Charging at noon is worth more than charging at
-        midnight; it is the roof that earns the difference, not the car.
+        Priced at the import tariff of ${fmt(rate, 2)} per kWh. Against a
+        public charger at ${fmt(src.public_chf_per_kwh, 2)} a self-supplied
+        kWh saves ${fmt(src.public_chf_per_kwh, 2)} and a bought one
+        ${fmt(saving, 2)}; the energy page's payback splits it that way.
       </p>`;
   }
 }
+
+function initChargeView() {
+  const row = document.getElementById("chargeView");
+  if (!row) return;
+  row.addEventListener("click", (evt) => {
+    const btn = evt.target.closest("button[data-view]");
+    if (!btn) return;
+    chargeView = btn.dataset.view;
+    for (const b of row.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === btn));
+    if (lastPayloads) renderSources(lastPayloads.runs);
+  });
+}
+initChargeView();
 
 // The car against the one it replaces. Two conversions sit between the
 // measurement and the answer - how far a kWh goes, and what a petrol car
@@ -511,160 +584,6 @@ function iceYearTable(ice) {
     </table>`;
 }
 
-function renderSessions(payload) {
-  const container = document.getElementById("chartSessions");
-  const table = document.getElementById("tableSessions");
-  if (!container) return;
-  const sessions = (payload.sessions || []).slice(0, 20);
-  if (!sessions.length) {
-    container.innerHTML =
-      '<div class="empty-state">No charging session recorded yet - the page fills up once a car charges.</div>';
-    table.innerHTML = "";
-    return;
-  }
-
-  // Measured sessions wear the clamp's colour, reconstructed ones the
-  // charger's own - the same pairing as the two lines in the power chart
-  // above, so the page only has to teach it once.
-  const barColor = (s) =>
-    s.measured ? "--series-wallbox-meter" : "--series-wallbox";
-
-  const rowH = 26;
-  const width = chartWidth(container);
-  const height = sessions.length * rowH + 30;
-  // The date gutter and the value label are both text, so their room is
-  // measured in characters rather than in a share of the width. At phone
-  // width the full 150px gutter took 43% of the chart and the value label
-  // ran off the right edge, so both get shorter instead of smaller.
-  const narrow = width < 560;
-  const padL = narrow ? 88 : 150;
-  const padR = narrow ? 58 : 60;
-  const padT = 8;
-  const svg = newSvg(container, width, height);
-
-  const x = d3
-    .scaleLinear()
-    .domain([0, d3.max(sessions, (s) => s.energy_kwh) * 1.1 || 1])
-    .range([padL, width - padR]);
-
-  sessions.forEach((s, i) => {
-    const y = padT + i * rowH;
-    const start = new Date(s.start);
-    svg
-      .append("text")
-      .attr("x", padL - 10)
-      .attr("y", y + rowH / 2 + 3)
-      .attr("text-anchor", "end")
-      .attr("font-size", 11)
-      .attr("fill", cssVar("--text-secondary"))
-      .text(
-        narrow
-          ? start.toLocaleString("en-GB", {
-              day: "2-digit",
-              month: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : start.toLocaleString("en-GB", {
-              weekday: "short",
-              day: "2-digit",
-              month: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-      );
-
-    const w = Math.max(2, x(s.energy_kwh) - padL);
-    svg
-      .append("rect")
-      .attr("x", padL)
-      .attr("y", y + 4)
-      .attr("width", w)
-      .attr("height", rowH - 10)
-      .attr("rx", 4)
-      .attr("fill", cssVar(barColor(s)))
-      .on("mousemove", (event) =>
-        showTip(
-          tipRows(start.toLocaleString("en-GB"), [
-            { color: barColor(s), label: "Charged", value: kwhWithCost(s.energy_kwh) },
-            { label: "Duration", value: `${fmt(s.duration_min, 0)} min` },
-            {
-              label: s.measured ? "Peak" : "Peak (derived)",
-              value: `${fmt(s.peak_kw, 1)} kW`,
-            },
-            {
-              label: "Self-supplied",
-              value:
-                s.own_pct === null || s.own_pct === undefined
-                  ? "-"
-                  : `${fmt(s.own_pct, 0)}% (roof ${fmt(s.pv_kwh, 1)}, battery ${fmt(
-                      s.battery_kwh,
-                      1
-                    )}, grid ${fmt(s.grid_kwh, 1)} kWh)`,
-            },
-            {
-              label: "Source",
-              value: s.measured
-                ? "Clamp meter on the feed"
-                : "Charger's counter, placed by house load",
-            },
-          ]),
-          event
-        )
-      )
-      .on("mouseleave", hideTip);
-
-    svg
-      .append("text")
-      .attr("x", padL + w + 8)
-      .attr("y", y + rowH / 2 + 3)
-      .attr("font-size", 11)
-      .attr("fill", cssVar("--text-secondary"))
-      // The cost is in the tooltip and in the table either way, so the
-      // label that does not fit is the one that goes.
-      .text(
-        narrow
-          ? `${fmt(s.energy_kwh, 1)} kWh`
-          : `${fmt(s.energy_kwh, 1)} kWh (${cost(s.energy_kwh)})`
-      );
-  });
-
-  table.innerHTML = `
-    <table class="data">
-      <thead><tr><th>Start</th><th>Duration</th><th>Energy</th><th>Cost</th><th>Peak</th><th>Self-supplied</th><th>Source</th></tr></thead>
-      <tbody>${(payload.sessions || [])
-        .map(
-          (s) => `<tr>
-            <td>${new Date(s.start).toLocaleString("en-GB")}</td>
-            <td>${fmt(s.duration_min, 0)} min</td>
-            <td>${fmt(s.energy_kwh, 2)} kWh</td>
-            <td>${cost(s.energy_kwh)}</td>
-            <td>${fmt(s.peak_kw, 1)} kW</td>
-            <td>${
-              s.own_pct === null || s.own_pct === undefined ? "-" : `${fmt(s.own_pct, 0)}%`
-            }</td>
-            <td>${s.measured ? "Measured" : "Reconstructed"}</td>
-          </tr>`
-        )
-        .join("")}</tbody>
-    </table>`;
-  // How much of this is measured and how much reconstructed, in the headline
-  // rather than only in the table: a total that mixes the two should say so.
-  const reconstructed = payload.sessions.length - (payload.measured_count || 0);
-  document.getElementById("sessionNote").textContent =
-    `Last ${payload.days} days - ${fmt(payload.total_kwh, 1)} kWh in ${
-      payload.sessions.length
-    } session(s) worth ${cost(payload.total_kwh)}. ` +
-    (reconstructed === 0
-      ? "All of it measured by the clamp meter on the charger's feed."
-      : (payload.measured_count || 0) === 0
-      ? "All of it reconstructed from the charger's counter, from before the clamp meter went in."
-      : `${payload.measured_count} measured by the clamp meter (${fmt(
-          payload.measured_kwh,
-          1
-        )} kWh), ${reconstructed} reconstructed from the charger's counter from before it went in.`);
-}
-
 // The clamp meter against the charger's own registers. Not a chart: three
 // comparisons, each of which needs a sentence about what it does and does
 // not establish, which is a table's job and not a bar's.
@@ -786,8 +705,7 @@ async function loadSessions() {
       fetch(`/api/wallbox/crosscheck?days=${SESSION_DAYS}`).then((r) => r.json()),
     ]);
     lastPayloads = { runs: sessions, compare: crosscheck };
-    renderSessions(sessions);
-    renderSources(sessions.sources);
+    renderSources(sessions);
     renderIce(sessions.ice);
     renderEvents(events);
     renderCrosscheck(crosscheck);
@@ -805,8 +723,7 @@ async function loadSessions() {
 let lastPayloads = null;
 onViewportResize(() => {
   if (!lastPayloads) return;
-  renderSessions(lastPayloads.runs);
-  renderSources(lastPayloads.runs.sources);
+  renderSources(lastPayloads.runs);
   renderIce(lastPayloads.runs.ice);
   renderCrosscheck(lastPayloads.compare);
 });
