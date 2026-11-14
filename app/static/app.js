@@ -34,6 +34,24 @@ const TILE_DEFS = [
     },
   },
   {
+    key: "conversion_loss_kw",
+    label: "Conversion Loss",
+    unit: "W",
+    color: "--text-muted",
+    // DC in (PV plus battery) minus what leaves the inverter as AC. Lost
+    // inside the inverter, so it shows up in no other tile.
+    get: (latest) => {
+      const loss = latest.conversion_loss_kw;
+      if (loss === null || loss === undefined) return null;
+      const dcIn = (latest.pv_kw || 0) + (latest.battery_discharge_kw || 0);
+      const parts = [];
+      if (dcIn >= 0.1) parts.push(`${fmt((100 * loss) / dcIn, 1)}% of ${fmt(dcIn, 2)} kW DC in`);
+      if (latest.battery_temp_c !== null && latest.battery_temp_c !== undefined)
+        parts.push(`battery ${fmt(latest.battery_temp_c, 1)} °C`);
+      return { value: `${fmt(loss * 1000, 0)} W`, sub: parts.join(" · ") };
+    },
+  },
+  {
     key: "heatpump_kw",
     label: "Heat Pump",
     unit: "kW",
