@@ -43,6 +43,13 @@ class Readings:
     # the sun is on the other one" from "this side makes nothing because it
     # is not wired up". An unused input reads 0.0 V.
     pv_string_v: tuple[float, float, float, float] | None = None
+    # What leaves the inverter on its AC side, all three phases (35138,
+    # "Total Power"). Next to the DC side - PV plus the battery - it gives
+    # the conversion loss as a measurement instead of a balance residual.
+    inverter_ac_kw: float | None = None
+    # The BMS's battery temperature (37003, 0.1 degC). The only direct way
+    # to tell whether the battery heater has any reason to run.
+    battery_temp_c: float | None = None
 
 
 class GoodWeModbusReader:
@@ -58,10 +65,11 @@ class GoodWeModbusReader:
         MPPT string, summed. Unused strings read 0W and don't contribute.
       - consumption_kw: register 35171 "Total Load power" - the inverter's
         own measured on-grid load, not an approximation.
-      - grid_kw: register 35139 "AC ActivePower" - falls back to the
-        inverter's own on-grid port measurement when no external smart meter
-        is connected (which is the case on this installation), so this is
-        the real grid import/export power, not a fixed 0. Positive means
+      - grid_kw: registers 35139/35140 "Active Power" - the external
+        smart meter's total at the connection point (the meter block from
+        36000 is live on this installation and its 36025 total matches).
+        Note it is the sum over the phases: one phase can import while
+        another exports and this reads 0. Positive means
         export (feed-in), negative means import - confirmed on recorded
         history, where pv - battery - load equals this value exactly on
         every row. SurplusController relies on that sign convention once
@@ -109,6 +117,7 @@ class GoodWeModbusReader:
 
     # BMS information block ("SOC", first group battery capacity, in %).
     SOC_REGISTER = 37007
+    BATTERY_TEMP_REGISTER = 37003
 
     def __init__(
         self,
@@ -143,7 +152,27 @@ class GoodWeModbusReader:
             return result.registers
 
         regs = self._link.call("read", _do)
-        return self._decode(regs, self._read_soc_pct())
+        return self._decode(regs, self._read_soc_pct(), self._read_battery_temp_c())
+
+    def _read_battery_temp_c(self) -> float | None:
+        """The BMS battery temperature (37003, signed, 0.1 degC); None on
+        any failure, like the SOC - it is recorded, never acted on."""
+
+        def _do() -> int:
+            result = self._link.client.read_holding_registers(
+                self.BATTERY_TEMP_REGISTER, count=1, device_id=self._slave_id
+            )
+            if result.isError():
+                raise IOError(f"GoodWe battery temperature read returned an error: {result}")
+            return result.registers[0]
+
+        try:
+            raw = int(self._link.call("battery temperature read", _do))
+        except Exception:
+            logger.warning("Failed to read the battery temperature", exc_info=True)
+            return None
+        temp = (raw - 0x10000 if raw >= 0x8000 else raw) / 10
+        return temp if -40 <= temp <= 90 else None
 
     def _read_soc_pct(self) -> float | None:
         """reads the BMS state of charge (register 37007), which sits well
@@ -176,7 +205,12 @@ class GoodWeModbusReader:
             return None
         return soc
 
-    def _decode(self, regs: list[int], battery_soc_pct: float | None) -> Readings:
+    def _decode(
+        self,
+        regs: list[int],
+        battery_soc_pct: float | None,
+        battery_temp_c: float | None = None,
+    ) -> Readings:
         def offset(addr: int) -> int:
             return addr - self.BASE_REGISTER
 
@@ -210,6 +244,9 @@ class GoodWeModbusReader:
             round(s32(addr) / 1000, 3) for addr in (35163, 35165, 35167)
         )
         grid_kw = s32(35139) / 1000
+        # 35138 is a signed 16-bit value on its own; 35137 is reserved.
+        raw_ac = regs[offset(35138)]
+        inverter_ac_kw = (raw_ac - 0x10000 if raw_ac >= 0x8000 else raw_ac) / 1000
         # Pbattery1 is negative while charging and positive while discharging
         # (opposite of the intuitive convention) - confirmed by comparing
         # against the PV/load/grid energy balance on live data. Negate so
@@ -240,4 +277,6 @@ class GoodWeModbusReader:
             load_phase_kw=load_phase_kw,
             pv_string_kw=pv_string_kw,
             pv_string_v=pv_string_v,
+            inverter_ac_kw=inverter_ac_kw,
+            battery_temp_c=battery_temp_c,
         )

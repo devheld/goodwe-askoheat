@@ -630,6 +630,8 @@ class SurplusController:
             pv_string_kw=readings.pv_string_kw,
             balcony_kw=(balcony or {}).get("power_kw"),
             balcony_energy_kwh=(balcony or {}).get("energy_since_boot_kwh"),
+            inverter_ac_kw=readings.inverter_ac_kw,
+            battery_temp_c=readings.battery_temp_c,
         )
         self._store.insert(reading)
         # A suspended poll carries either the previous snapshot or no reading
@@ -688,6 +690,20 @@ class SurplusController:
                 "status": status,
                 "status_text": status_text,
                 "balance_gap_kw": balance_gap_kw,
+                # The same gap measured: DC in (PV, battery) minus AC out.
+                "inverter_ac_kw": readings.inverter_ac_kw,
+                "conversion_loss_kw": (
+                    None
+                    if readings.inverter_ac_kw is None
+                    else round(
+                        readings.pv_kw
+                        + readings.battery_discharge_kw
+                        - readings.battery_charge_kw
+                        - readings.inverter_ac_kw,
+                        3,
+                    )
+                ),
+                "battery_temp_c": readings.battery_temp_c,
                 "wallbox": wallbox,
                 "shelly": shelly,
                 "balcony": balcony,

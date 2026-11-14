@@ -116,6 +116,9 @@ class Reading:
     # balcony_export and _priced in main.py.
     balcony_kw: float | None = None
     balcony_energy_kwh: float | None = None
+    # The inverter's AC output and the battery's temperature, see Readings.
+    inverter_ac_kw: float | None = None
+    battery_temp_c: float | None = None
 
 
 def period_start(period: str, now: datetime | None = None) -> datetime:
@@ -256,6 +259,8 @@ class HistoryStore:
                 ("pv4_kw", "REAL"),
                 ("balcony_kw", "REAL"),
                 ("balcony_energy_kwh", "REAL"),
+                ("inverter_ac_kw", "REAL"),
+                ("battery_temp_c", "REAL"),
             ):
                 if column not in existing_columns:
                     conn.execute("ALTER TABLE readings ADD COLUMN " + column + " " + decl)
@@ -299,13 +304,13 @@ class HistoryStore:
                  wallbox_meter_kw, wallbox_meter_l1_kw, wallbox_meter_l2_kw,
                  wallbox_meter_l3_kw, wallbox_meter_energy_kwh,
                  pv1_kw, pv2_kw, pv3_kw, pv4_kw,
-                 balcony_kw, balcony_energy_kwh)
+                 balcony_kw, balcony_energy_kwh, inverter_ac_kw, battery_temp_c)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?,
                         ?, ?, ?, ?,
-                        ?, ?)
+                        ?, ?, ?, ?)
                 """,
                 (
                     reading.timestamp,
@@ -340,6 +345,8 @@ class HistoryStore:
                     *(reading.pv_string_kw or (None, None, None, None)),
                     reading.balcony_kw,
                     reading.balcony_energy_kwh,
+                    reading.inverter_ac_kw,
+                    reading.battery_temp_c,
                 ),
             )
 
