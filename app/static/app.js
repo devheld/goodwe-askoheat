@@ -43,10 +43,10 @@ const TILE_DEFS = [
     get: (latest) => {
       const loss = latest.conversion_loss_kw;
       if (loss === null || loss === undefined) return null;
-      // A 5-minute mean: single reads of the inverter are not taken at
+      // A 15-minute mean: single reads of the inverter are not taken at
       // the same instant and swing by kilowatts under a switching load.
       const dcIn = latest.conversion_dc_in_kw || 0;
-      const parts = ["⌀ 5 min"];
+      const parts = ["⌀ 15 min"];
       if (dcIn >= 0.1) parts.push(`${fmt((100 * loss) / dcIn, 1)}% of ${fmt(dcIn, 2)} kW DC in`);
       if (latest.battery_temp_c !== null && latest.battery_temp_c !== undefined)
         parts.push(`battery ${fmt(latest.battery_temp_c, 1)} °C`);

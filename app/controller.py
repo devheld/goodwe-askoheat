@@ -1042,7 +1042,7 @@ class SurplusController:
         )
 
 
-CONVERSION_WINDOW_S = 300
+CONVERSION_WINDOW_S = 900
 
 
 def _pv_string_fields(
