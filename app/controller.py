@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 from .askoheat_client import AskoHeatController
@@ -99,6 +100,11 @@ class SurplusController:
         self._current_step = settings.step_min
         self._lock = threading.Lock()
         self._latest: dict | None = None
+        # (monotonic time, DC in kW, AC out kW) of the last few minutes. The
+        # inverter's registers are not sampled at the same instant: under a
+        # load that switches every few seconds a single read can be off by
+        # kilowatts either way, so the loss is only shown as a mean.
+        self._conversion: deque[tuple[float, float, float]] = deque()
         self._stop_event = threading.Event()
         # True for exactly the first tick after (re)reading the step from the
         # device: that tick should observe/confirm against current PV
@@ -153,6 +159,24 @@ class SurplusController:
                 device_name,
                 exc_info=True,
             )
+
+    def _conversion_mean(self, readings) -> dict:
+        """DC in minus AC out, averaged over CONVERSION_WINDOW_S."""
+        if readings.inverter_ac_kw is None:
+            return {"conversion_loss_kw": None, "conversion_dc_in_kw": None}
+        now = time.monotonic()
+        dc_in = readings.pv_kw + readings.battery_discharge_kw - readings.battery_charge_kw
+        self._conversion.append((now, dc_in, readings.inverter_ac_kw))
+        while self._conversion and now - self._conversion[0][0] > CONVERSION_WINDOW_S:
+            self._conversion.popleft()
+        n = len(self._conversion)
+        mean_in = sum(x[1] for x in self._conversion) / n
+        mean_out = sum(x[2] for x in self._conversion) / n
+        return {
+            "conversion_loss_kw": round(mean_in - mean_out, 3),
+            "conversion_dc_in_kw": round(mean_in, 3),
+            "conversion_samples": n,
+        }
 
     def _device_health(self, inverter_error: str | None = None) -> dict:
         """Which devices answered last time they were asked.
@@ -692,17 +716,7 @@ class SurplusController:
                 "balance_gap_kw": balance_gap_kw,
                 # The same gap measured: DC in (PV, battery) minus AC out.
                 "inverter_ac_kw": readings.inverter_ac_kw,
-                "conversion_loss_kw": (
-                    None
-                    if readings.inverter_ac_kw is None
-                    else round(
-                        readings.pv_kw
-                        + readings.battery_discharge_kw
-                        - readings.battery_charge_kw
-                        - readings.inverter_ac_kw,
-                        3,
-                    )
-                ),
+                **self._conversion_mean(readings),
                 "battery_temp_c": readings.battery_temp_c,
                 "wallbox": wallbox,
                 "shelly": shelly,
@@ -1026,6 +1040,9 @@ class SurplusController:
             power_kw=wallbox["power_kw"],
             energy_kwh=wallbox["total_energy_kwh"],
         )
+
+
+CONVERSION_WINDOW_S = 300
 
 
 def _pv_string_fields(
